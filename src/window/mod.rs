@@ -71,6 +71,45 @@ impl Window
         buffer.insert(&mut buffer.end_iter(), &format!("{}\n", text));
     }
 
+    pub fn send_message(&self)
+    {
+        let entry = self.imp().entry.clone();
+        let text = entry.text().to_string();
+        if !text.is_empty()
+        {
+            self.add_chat_row(&text);
+            entry.set_text("");
+        }
+    }
+
+    pub fn setup_callbacks(&self)
+    {
+        let send_button = self.imp().send.clone();
+        let entry = self.imp().entry.clone();
+
+        send_button.connect_clicked(
+            glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |_|
+                {
+                    window.send_message();
+                }
+            )
+        );
+
+        entry.connect_activate(
+            glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |_|
+                {
+                    window.send_message();
+                }
+            )
+        );
+    }
+
     fn setup_factory(&self)
     {
         let factory = gtk::SignalListItemFactory::new();

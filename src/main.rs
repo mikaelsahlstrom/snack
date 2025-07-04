@@ -7,7 +7,8 @@ use log::debug;
 
 const APP_ID: &str = "org.gtk_rs.snack";
 
-fn main() -> glib::ExitCode
+#[tokio::main]
+async fn main() -> glib::ExitCode
 {
     env_logger::init();
 

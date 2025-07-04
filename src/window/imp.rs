@@ -44,6 +44,7 @@ impl ObjectImpl for Window
     {
         self.parent_constructed();
         self.obj().setup_members();
+        self.obj().setup_callbacks();
         self.obj().setup_factory();
     }
 }
