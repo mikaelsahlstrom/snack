@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <template class="MemberRow" parent="GtkBox">
+    <child>
+      <object class="GtkLabel" id="member_label">
+        <property name="margin-top">3</property>
+        <property name="margin-bottom">3</property>
+        <property name="margin-start">3</property>
+        <property name="margin-end">3</property>
+      </object>
+    </child>
+  </template>
+</interface>
