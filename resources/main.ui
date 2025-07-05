@@ -13,11 +13,17 @@
                     <object class="GtkBox">
                         <property name="orientation">horizontal</property>
                         <child>
-                            <object class="GtkTextView" id="chat">
+                            <object class="GtkScrolledWindow" id="chat_scrolled">
                                 <property name="vexpand">true</property>
                                 <property name="hexpand">true</property>
-                                <property name="editable">false</property>
-                                <property name="cursor-visible">false</property>
+                                <property name="hscrollbar-policy">automatic</property>
+                                <property name="vscrollbar-policy">automatic</property>
+                                <child>
+                                    <object class="GtkTextView" id="chat">
+                                        <property name="editable">false</property>
+                                        <property name="cursor-visible">false</property>
+                                    </object>
+                                </child>
                             </object>
                         </child>
                         <child>

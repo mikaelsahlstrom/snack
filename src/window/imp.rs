@@ -12,6 +12,8 @@ pub struct Window
     #[template_child]
     pub chat: TemplateChild<TextView>,
     #[template_child]
+    pub chat_scrolled: TemplateChild<gtk::ScrolledWindow>,
+    #[template_child]
     pub entry: TemplateChild<Entry>,
     #[template_child]
     pub send: TemplateChild<Button>,

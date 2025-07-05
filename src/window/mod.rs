@@ -75,10 +75,14 @@ impl Window
     {
         let entry = self.imp().entry.clone();
         let text = entry.text().to_string();
+
         if !text.is_empty()
         {
             self.add_chat_row(&text);
             entry.set_text("");
+            let adjustment = self.imp().chat_scrolled.vadjustment().clone();
+            adjustment.set_value(adjustment.upper());
+            self.imp().chat_scrolled.set_vadjustment(Some(&adjustment));
         }
     }
 
