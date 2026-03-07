@@ -52,8 +52,8 @@ impl Snack
                     room::user::User { jid: "bob@example.org".into(), name: "Bob".into() },
                 ],
                 messages: vec![
-                    room::message::Message { from: "Alice".into(), body: "Hello everyone!".into(), time: "10:00".into() },
-                    room::message::Message { from: "Bob".into(), body: "Hey Alice!".into(), time: "10:01".into() },
+                    room::message::Message { from: "Alice".into(), body: "Hello everyone!".into(), received: chrono::Utc::now() },
+                    room::message::Message { from: "Bob".into(), body: "Hey Alice!".into(), received: chrono::Utc::now() },
                 ],
             },
             room::Room
@@ -65,7 +65,7 @@ impl Snack
                     room::user::User { jid: "charlie@example.org".into(), name: "Charlie".into() },
                 ],
                 messages: vec![
-                    room::message::Message { from: "Charlie".into(), body: "Welcome to XMPP!".into(), time: "09:30".into() },
+                    room::message::Message { from: "Charlie".into(), body: "Welcome to XMPP!".into(), received: chrono::Utc::now() },
                 ],
             },
         ];
@@ -107,7 +107,7 @@ impl Snack
                         {
                             from: "You".to_string(),
                             body,
-                            time: "now".to_string(),
+                            received: chrono::Utc::now(),
                         });
 
                         self.message_input.clear();
@@ -122,7 +122,7 @@ impl Snack
 
     fn view(&self) -> Element<'_, Message>
     {
-        // --- Room list (left sidebar) ---
+        // Room list (left sidebar).
         let room_list: Element<'_, Message> =
         {
             let items: Vec<Element<'_, Message>> = self.rooms.iter().enumerate().map(|(i, r)|
@@ -158,21 +158,32 @@ impl Snack
             .into()
         };
 
-        // --- Center: messages + input ---
+        // Center: topic, messages and input.
         let center: Element<'_, Message> = if let Some(index) = self.active_room
         {
             let room = &self.rooms[index];
 
-            // Room topic
+            // Room topic.
             let topic_label = container(text(&room.topic).size(14))
                 .padding(8)
                 .width(Fill)
                 .style(container::bordered_box);
 
-            // Message list
+            // Message list.
+            let today = chrono::Local::now().date_naive();
             let messages: Vec<Element<'_, Message>> = room.messages.iter().map(|m|
             {
-                let line = text(format!("[{}] {}: {}", m.time, m.from, m.body)).size(14);
+                let local_time = m.received.with_timezone(&chrono::Local);
+                let timestamp = if local_time.date_naive() == today
+                {
+                    local_time.format("%H:%M:%S").to_string()
+                }
+                else
+                {
+                    local_time.format("%Y-%m-%d %H:%M:%S").to_string()
+                };
+                let line = text(format!("[{}] {}: {}", timestamp, m.from, m.body)).size(14);
+
                 container(line).padding(4).width(Fill).into()
             }).collect();
 
@@ -183,7 +194,7 @@ impl Snack
             .height(Fill)
             .width(Fill);
 
-            // Input bar
+            // Input bar.
             let input = text_input("Type a message...", &self.message_input)
                 .on_input(Message::InputChanged)
                 .on_submit(Message::SendMessage)
@@ -212,22 +223,18 @@ impl Snack
                 .into()
         };
 
-        // --- Member list (right sidebar) ---
+        // Member list (right sidebar).
         let member_list: Element<'_, Message> = if let Some(index) = self.active_room
         {
             let room = &self.rooms[index];
-            let header = text("Members").size(14);
             let members: Vec<Element<'_, Message>> = room.users.iter().map(|u|
             {
                 text(&u.name).size(14).into()
             }).collect();
 
-            let mut items = vec![header.into()];
-            items.extend(members);
-
             container(
                 scrollable(
-                    column(items).spacing(6).width(Fill)
+                    column(members).spacing(6).width(Fill)
                 )
             )
             .width(Length::Fixed(160.0))
@@ -244,7 +251,7 @@ impl Snack
                 .into()
         };
 
-        // --- Main layout ---
+        // Main layout.
         return row![room_list, center, member_list]
                 .spacing(0)
                 .height(Fill)
