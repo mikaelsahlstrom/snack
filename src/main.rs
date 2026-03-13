@@ -5,6 +5,12 @@ mod room;
 
 const MESSAGE_SCROLL_ID: &str = "message_scroll";
 const MESSAGE_INPUT_ID: &str = "message_input";
+const JOIN_INPUT_ID: &str = "join_input";
+
+fn focus_join_input() -> Task<Message>
+{
+    iced::widget::operation::focus(Id::new(JOIN_INPUT_ID))
+}
 
 fn focus_input() -> Task<Message>
 {
@@ -40,6 +46,8 @@ struct Snack
     rooms: Vec<room::Room>,
     active_room: Option<usize>,
     message_input: String,
+    show_join_panel: bool,
+    join_input: String,
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +56,11 @@ enum Message
     SelectRoom(usize),
     InputChanged(String),
     SendMessage,
+    ShowJoinPanel,
+    HideJoinPanel,
+    JoinInputChanged(String),
+    JoinRoom,
+    LeaveRoom,
 }
 
 fn main() -> iced::Result
@@ -131,6 +144,8 @@ impl Snack
             rooms,
             active_room: Some(0),
             message_input: String::new(),
+            show_join_panel: false,
+            join_input: String::new(),
         }, focus_input())
     }
 
@@ -146,6 +161,7 @@ impl Snack
             Message::SelectRoom(index) =>
             {
                 self.active_room = Some(index);
+                self.show_join_panel = false;
                 return Task::batch([snap_to_bottom(), focus_input()]);
             }
             Message::InputChanged(value) =>
@@ -172,7 +188,58 @@ impl Snack
                     }
                 }
             }
-
+            Message::ShowJoinPanel =>
+            {
+                self.show_join_panel = true;
+                self.join_input.clear();
+                return focus_join_input();
+            }
+            Message::HideJoinPanel =>
+            {
+                self.show_join_panel = false;
+                return focus_input();
+            }
+            Message::JoinInputChanged(value) =>
+            {
+                self.join_input = value;
+            }
+            Message::JoinRoom =>
+            {
+                let jid = self.join_input.trim().to_string();
+                if !jid.is_empty()
+                {
+                    let title = jid.split('@').next().unwrap_or(&jid).to_string();
+                    self.rooms.push(room::Room
+                    {
+                        jid,
+                        title,
+                        topic: String::new(),
+                        users: Vec::new(),
+                        messages: Vec::new(),
+                        unread: false,
+                    });
+                    self.active_room = Some(self.rooms.len() - 1);
+                    self.show_join_panel = false;
+                    self.join_input.clear();
+                    return focus_input();
+                }
+            }
+            Message::LeaveRoom =>
+            {
+                if let Some(index) = self.active_room
+                {
+                    self.rooms.remove(index);
+                    if self.rooms.is_empty()
+                    {
+                        self.active_room = None;
+                    }
+                    else if index >= self.rooms.len()
+                    {
+                        self.active_room = Some(self.rooms.len() - 1);
+                    }
+                    return focus_input();
+                }
+            }
         }
         Task::none()
     }
@@ -182,6 +249,15 @@ impl Snack
         // Room list (left sidebar).
         let room_list: Element<'_, Message> =
         {
+            let sidebar_header = row![
+                text("Rooms").size(14),
+                text("").width(Fill),
+                button(text("+").size(14))
+                    .on_press(Message::ShowJoinPanel)
+                    .padding(4)
+                    .style(button::text),
+            ].align_y(iced::Alignment::Center).width(Fill);
+
             // Group rooms by server (part after @ in jid).
             let mut servers: Vec<String> = Vec::new();
             let mut grouped: Vec<(String, Vec<usize>)> = Vec::new();
@@ -236,7 +312,7 @@ impl Snack
             );
 
             container(
-                column![list].spacing(8).width(Fill)
+                column![sidebar_header, list].spacing(8).width(Fill)
             )
             .width(Length::Fixed(200.0))
             .height(Fill)
@@ -246,12 +322,53 @@ impl Snack
         };
 
         // Center: topic, messages and input.
-        let center: Element<'_, Message> = if let Some(index) = self.active_room
+        let center: Element<'_, Message> = if self.show_join_panel
+        {
+            let join_input = text_input("room@conference.example.org", &self.join_input)
+                .id(Id::new(JOIN_INPUT_ID))
+                .on_input(Message::JoinInputChanged)
+                .on_submit(Message::JoinRoom)
+                .padding(10)
+                .width(Length::Fixed(400.0));
+
+            let join_btn = button(text("Join").size(14))
+                .on_press(Message::JoinRoom)
+                .padding(10);
+
+            let cancel_btn = button(text("Cancel").size(14))
+                .on_press(Message::HideJoinPanel)
+                .padding(10)
+                .style(button::text);
+
+            container(
+                column![
+                    text("Join a room").size(18),
+                    join_input,
+                    row![cancel_btn, join_btn].spacing(8),
+                ].spacing(12).align_x(iced::Alignment::Center)
+            )
+            .center(Fill)
+            .width(Fill)
+            .height(Fill)
+            .into()
+        }
+        else if let Some(index) = self.active_room
         {
             let room = &self.rooms[index];
 
-            // Room topic.
-            let topic_label = container(text(&room.topic).size(14))
+            // Room topic with leave button.
+            let leave_btn = button(text("Leave").size(12))
+                .on_press(Message::LeaveRoom)
+                .padding(4)
+                .style(button::text);
+
+            let topic_label = container(
+                row![
+                    text(&room.topic).size(14),
+                    text("").width(Fill),
+                    leave_btn,
+                ].align_y(iced::Alignment::Center).width(Fill)
+            )
                 .padding(8)
                 .width(Fill)
                 .style(container::bordered_box);
