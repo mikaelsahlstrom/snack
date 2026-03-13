@@ -4,10 +4,35 @@ use iced::widget::{ column, container, row, scrollable, text, text_input, button
 mod room;
 
 const MESSAGE_SCROLL_ID: &str = "message_scroll";
+const MESSAGE_INPUT_ID: &str = "message_input";
+
+fn focus_input() -> Task<Message>
+{
+    iced::widget::operation::focus(Id::new(MESSAGE_INPUT_ID))
+}
 
 fn snap_to_bottom() -> Task<Message>
 {
     iced::widget::operation::snap_to_end(Id::new(MESSAGE_SCROLL_ID))
+}
+
+fn room_button_active(theme: &Theme, status: button::Status) -> button::Style
+{
+    let palette = theme.extended_palette();
+    let base = button::text(theme, status);
+
+    button::Style
+    {
+        background: Some(iced::Background::Color(
+            match status
+            {
+                button::Status::Hovered => palette.primary.weak.color,
+                _ => palette.primary.weak.color.scale_alpha(0.5),
+            }
+        )),
+        text_color: palette.primary.strong.text,
+        ..base
+    }
 }
 
 struct Snack
@@ -34,12 +59,13 @@ fn application() -> Application<impl Program<Message = Message, Theme = Theme>>
 {
     return iced::application(Snack::new, Snack::update, Snack::view)
                 .subscription(Snack::subscription)
-                .title(Snack::title);
+                .title(Snack::title)
+                .theme(Snack::theme);
 }
 
 impl Snack
 {
-    fn new() -> Self
+    fn new() -> (Self, Task<Message>)
     {
         let rooms = vec![
             room::Room
@@ -55,6 +81,7 @@ impl Snack
                     room::message::Message { from: "Alice".into(), body: "Hello everyone!".into(), received: chrono::Utc::now() },
                     room::message::Message { from: "Bob".into(), body: "Hey Alice!".into(), received: chrono::Utc::now() },
                 ],
+                unread: true,
             },
             room::Room
             {
@@ -67,15 +94,44 @@ impl Snack
                 messages: vec![
                     room::message::Message { from: "Charlie".into(), body: "Welcome to XMPP!".into(), received: chrono::Utc::now() },
                 ],
+                unread: false,
+            },
+            room::Room
+            {
+                jid: "linux@conference.jabber.org".to_string(),
+                title: "Linux".to_string(),
+                topic: "Linux and open source".to_string(),
+                users: vec![
+                    room::user::User { jid: "dave@jabber.org".into(), name: "Dave".into() },
+                    room::user::User { jid: "eve@jabber.org".into(), name: "Eve".into() },
+                ],
+                messages: vec![
+                    room::message::Message { from: "Dave".into(), body: "Anyone tried the new kernel?".into(), received: chrono::Utc::now() },
+                    room::message::Message { from: "Eve".into(), body: "Yes, it's great!".into(), received: chrono::Utc::now() },
+                ],
+                unread: true,
+            },
+            room::Room
+            {
+                jid: "gaming@conference.jabber.org".to_string(),
+                title: "Gaming".to_string(),
+                topic: "PC and console gaming".to_string(),
+                users: vec![
+                    room::user::User { jid: "frank@jabber.org".into(), name: "Frank".into() },
+                ],
+                messages: vec![
+                    room::message::Message { from: "Frank".into(), body: "What are you all playing?".into(), received: chrono::Utc::now() },
+                ],
+                unread: false,
             },
         ];
 
-        Self
+        (Self
         {
             rooms,
             active_room: Some(0),
             message_input: String::new(),
-        }
+        }, focus_input())
     }
 
     fn title(&self) -> String
@@ -90,7 +146,7 @@ impl Snack
             Message::SelectRoom(index) =>
             {
                 self.active_room = Some(index);
-                return snap_to_bottom();
+                return Task::batch([snap_to_bottom(), focus_input()]);
             }
             Message::InputChanged(value) =>
             {
@@ -112,10 +168,11 @@ impl Snack
 
                         self.message_input.clear();
 
-                        return snap_to_bottom();
+                        return Task::batch([snap_to_bottom(), focus_input()]);
                     }
                 }
             }
+
         }
         Task::none()
     }
@@ -125,31 +182,61 @@ impl Snack
         // Room list (left sidebar).
         let room_list: Element<'_, Message> =
         {
-            let items: Vec<Element<'_, Message>> = self.rooms.iter().enumerate().map(|(i, r)|
-            {
-                let is_active = self.active_room == Some(i);
-                let label = text(&r.title).size(16);
-                let btn = button(label)
-                    .on_press(Message::SelectRoom(i))
-                    .width(Fill)
-                    .padding(10);
+            // Group rooms by server (part after @ in jid).
+            let mut servers: Vec<String> = Vec::new();
+            let mut grouped: Vec<(String, Vec<usize>)> = Vec::new();
 
-                let btn: Element<'_, Message> = if is_active
+            for (i, r) in self.rooms.iter().enumerate()
+            {
+                let server = r.jid.split('@').nth(1).unwrap_or(&r.jid).to_string();
+                if let Some(pos) = servers.iter().position(|s| *s == server)
                 {
-                    btn.style(button::primary).into()
+                    grouped[pos].1.push(i);
                 }
                 else
                 {
-                    btn.style(button::secondary).into()
-                };
+                    servers.push(server.clone());
+                    grouped.push((server, vec![i]));
+                }
+            }
 
-                return btn;
-            }).collect();
+            let mut items: Vec<Element<'_, Message>> = Vec::new();
+            for (server, indices) in &grouped
+            {
+                // Server header.
+                items.push(
+                    text(server.clone()).size(12).into()
+                );
+
+                // Room entries with unread dot or empty space, aligned with server names.
+                for &i in indices
+                {
+                    let r = &self.rooms[i];
+                    let is_active = self.active_room == Some(i);
+                    let icon = if r.unread { "\u{2022}" } else { " " };
+                    let label = row![
+                        text(icon).size(14),
+                        text(&r.title).size(14),
+                    ].spacing(6).align_y(iced::Alignment::Center);
+
+                    let style = if is_active { room_button_active } else { button::text };
+
+                    let item = button(label)
+                        .on_press(Message::SelectRoom(i))
+                        .width(Fill)
+                        .padding(6)
+                        .style(style);
+
+                    items.push(item.into());
+                }
+            }
+
+            let list = scrollable(
+                column(items).spacing(2).width(Fill)
+            );
 
             container(
-                scrollable(
-                    column(items).spacing(4).width(Fill)
-                )
+                column![list].spacing(8).width(Fill)
             )
             .width(Length::Fixed(200.0))
             .height(Fill)
@@ -196,6 +283,7 @@ impl Snack
 
             // Input bar.
             let input = text_input("Type a message...", &self.message_input)
+                .id(Id::new(MESSAGE_INPUT_ID))
                 .on_input(Message::InputChanged)
                 .on_submit(Message::SendMessage)
                 .padding(10)
@@ -227,15 +315,19 @@ impl Snack
         let member_list: Element<'_, Message> = if let Some(index) = self.active_room
         {
             let room = &self.rooms[index];
+            let member_count = room.users.len();
             let members: Vec<Element<'_, Message>> = room.users.iter().map(|u|
             {
                 text(&u.name).size(14).into()
             }).collect();
 
             container(
-                scrollable(
-                    column(members).spacing(6).width(Fill)
-                )
+                column![
+                    text(format!("Members ({})", member_count)).size(12),
+                    scrollable(
+                        column(members).spacing(6).width(Fill)
+                    )
+                ].spacing(8).width(Fill)
             )
             .width(Length::Fixed(160.0))
             .height(Fill)
@@ -253,14 +345,19 @@ impl Snack
 
         // Main layout.
         return row![room_list, center, member_list]
-                .spacing(0)
-                .height(Fill)
-                .width(Fill)
-                .into();
+            .spacing(0)
+            .height(Fill)
+            .width(Fill)
+            .into();
     }
 
     fn subscription(&self) -> iced::Subscription<Message>
     {
         iced::Subscription::none()
+    }
+
+    fn theme(&self) -> Theme
+    {
+        Theme::Nord
     }
 }

@@ -8,4 +8,5 @@ pub struct Room
     pub topic: String,
     pub users: Vec<user::User>,
     pub messages: Vec<message::Message>,
+    pub unread: bool,
 }
