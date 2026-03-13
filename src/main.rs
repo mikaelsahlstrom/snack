@@ -1,11 +1,12 @@
-use iced::{ Application, Element, Program, Task, Theme, Length, Fill };
-use iced::widget::{ column, container, row, scrollable, text, text_input, button, Id };
+use iced::{ Application, Element, Program, Task, Theme, Fill };
+use iced::widget::{ row, Id };
 
 mod room;
+mod ui;
 
-const MESSAGE_SCROLL_ID: &str = "message_scroll";
-const MESSAGE_INPUT_ID: &str = "message_input";
-const JOIN_INPUT_ID: &str = "join_input";
+pub const MESSAGE_SCROLL_ID: &str = "message_scroll";
+pub const MESSAGE_INPUT_ID: &str = "message_input";
+pub const JOIN_INPUT_ID: &str = "join_input";
 
 fn focus_join_input() -> Task<Message>
 {
@@ -22,36 +23,17 @@ fn snap_to_bottom() -> Task<Message>
     iced::widget::operation::snap_to_end(Id::new(MESSAGE_SCROLL_ID))
 }
 
-fn room_button_active(theme: &Theme, status: button::Status) -> button::Style
+pub struct Snack
 {
-    let palette = theme.extended_palette();
-    let base = button::text(theme, status);
-
-    button::Style
-    {
-        background: Some(iced::Background::Color(
-            match status
-            {
-                button::Status::Hovered => palette.primary.weak.color,
-                _ => palette.primary.weak.color.scale_alpha(0.5),
-            }
-        )),
-        text_color: palette.primary.strong.text,
-        ..base
-    }
-}
-
-struct Snack
-{
-    rooms: Vec<room::Room>,
-    active_room: Option<usize>,
-    message_input: String,
-    show_join_panel: bool,
-    join_input: String,
+    pub(crate) rooms: Vec<room::Room>,
+    pub(crate) active_room: Option<usize>,
+    pub(crate) message_input: String,
+    pub(crate) show_join_panel: bool,
+    pub(crate) join_input: String,
 }
 
 #[derive(Debug, Clone)]
-enum Message
+pub enum Message
 {
     SelectRoom(usize),
     InputChanged(String),
@@ -246,226 +228,15 @@ impl Snack
 
     fn view(&self) -> Element<'_, Message>
     {
-        // Room list (left sidebar).
-        let room_list: Element<'_, Message> =
-        {
-            let sidebar_header = row![
-                text("Rooms").size(14),
-                text("").width(Fill),
-                button(text("+").size(14))
-                    .on_press(Message::ShowJoinPanel)
-                    .padding(4)
-                    .style(button::text),
-            ].align_y(iced::Alignment::Center).width(Fill);
+        let room_list = ui::sidebar::view(self);
+        let center = ui::chat::view(self);
+        let member_list = ui::members::view(self);
 
-            // Group rooms by server (part after @ in jid).
-            let mut servers: Vec<String> = Vec::new();
-            let mut grouped: Vec<(String, Vec<usize>)> = Vec::new();
-
-            for (i, r) in self.rooms.iter().enumerate()
-            {
-                let server = r.jid.split('@').nth(1).unwrap_or(&r.jid).to_string();
-                if let Some(pos) = servers.iter().position(|s| *s == server)
-                {
-                    grouped[pos].1.push(i);
-                }
-                else
-                {
-                    servers.push(server.clone());
-                    grouped.push((server, vec![i]));
-                }
-            }
-
-            let mut items: Vec<Element<'_, Message>> = Vec::new();
-            for (server, indices) in &grouped
-            {
-                // Server header.
-                items.push(
-                    text(server.clone()).size(12).into()
-                );
-
-                // Room entries with unread dot or empty space, aligned with server names.
-                for &i in indices
-                {
-                    let r = &self.rooms[i];
-                    let is_active = self.active_room == Some(i);
-                    let icon = if r.unread { "\u{2022}" } else { " " };
-                    let label = row![
-                        text(icon).size(14),
-                        text(&r.title).size(14),
-                    ].spacing(6).align_y(iced::Alignment::Center);
-
-                    let style = if is_active { room_button_active } else { button::text };
-
-                    let item = button(label)
-                        .on_press(Message::SelectRoom(i))
-                        .width(Fill)
-                        .padding(6)
-                        .style(style);
-
-                    items.push(item.into());
-                }
-            }
-
-            let list = scrollable(
-                column(items).spacing(2).width(Fill)
-            );
-
-            container(
-                column![sidebar_header, list].spacing(8).width(Fill)
-            )
-            .width(Length::Fixed(200.0))
-            .height(Fill)
-            .padding(8)
-            .style(container::bordered_box)
-            .into()
-        };
-
-        // Center: topic, messages and input.
-        let center: Element<'_, Message> = if self.show_join_panel
-        {
-            let join_input = text_input("room@conference.example.org", &self.join_input)
-                .id(Id::new(JOIN_INPUT_ID))
-                .on_input(Message::JoinInputChanged)
-                .on_submit(Message::JoinRoom)
-                .padding(10)
-                .width(Length::Fixed(400.0));
-
-            let join_btn = button(text("Join").size(14))
-                .on_press(Message::JoinRoom)
-                .padding(10);
-
-            let cancel_btn = button(text("Cancel").size(14))
-                .on_press(Message::HideJoinPanel)
-                .padding(10)
-                .style(button::text);
-
-            container(
-                column![
-                    text("Join a room").size(18),
-                    join_input,
-                    row![cancel_btn, join_btn].spacing(8),
-                ].spacing(12).align_x(iced::Alignment::Center)
-            )
-            .center(Fill)
-            .width(Fill)
-            .height(Fill)
-            .into()
-        }
-        else if let Some(index) = self.active_room
-        {
-            let room = &self.rooms[index];
-
-            // Room topic with leave button.
-            let leave_btn = button(text("Leave").size(12))
-                .on_press(Message::LeaveRoom)
-                .padding(4)
-                .style(button::text);
-
-            let topic_label = container(
-                row![
-                    text(&room.topic).size(14),
-                    text("").width(Fill),
-                    leave_btn,
-                ].align_y(iced::Alignment::Center).width(Fill)
-            )
-                .padding(8)
-                .width(Fill)
-                .style(container::bordered_box);
-
-            // Message list.
-            let today = chrono::Local::now().date_naive();
-            let messages: Vec<Element<'_, Message>> = room.messages.iter().map(|m|
-            {
-                let local_time = m.received.with_timezone(&chrono::Local);
-                let timestamp = if local_time.date_naive() == today
-                {
-                    local_time.format("%H:%M:%S").to_string()
-                }
-                else
-                {
-                    local_time.format("%Y-%m-%d %H:%M:%S").to_string()
-                };
-                let line = text(format!("[{}] {}: {}", timestamp, m.from, m.body)).size(14);
-
-                container(line).padding(4).width(Fill).into()
-            }).collect();
-
-            let message_area = scrollable(
-                column(messages).spacing(2).width(Fill)
-            )
-            .id(Id::new(MESSAGE_SCROLL_ID))
-            .height(Fill)
-            .width(Fill);
-
-            // Input bar.
-            let input = text_input("Type a message...", &self.message_input)
-                .id(Id::new(MESSAGE_INPUT_ID))
-                .on_input(Message::InputChanged)
-                .on_submit(Message::SendMessage)
-                .padding(10)
-                .width(Fill);
-
-            let send_btn = button(text("Send").size(14))
-                .on_press(Message::SendMessage)
-                .padding(10);
-
-            let input_row = row![input, send_btn].spacing(8).width(Fill);
-
-            column![topic_label, message_area, input_row]
-                .spacing(8)
-                .width(Fill)
-                .height(Fill)
-                .padding(8)
-                .into()
-        }
-        else
-        {
-            container(text("Select a room").size(16))
-                .center(Fill)
-                .width(Fill)
-                .height(Fill)
-                .into()
-        };
-
-        // Member list (right sidebar).
-        let member_list: Element<'_, Message> = if let Some(index) = self.active_room
-        {
-            let room = &self.rooms[index];
-            let member_count = room.users.len();
-            let members: Vec<Element<'_, Message>> = room.users.iter().map(|u|
-            {
-                text(&u.name).size(14).into()
-            }).collect();
-
-            container(
-                column![
-                    text(format!("Members ({})", member_count)).size(12),
-                    scrollable(
-                        column(members).spacing(6).width(Fill)
-                    )
-                ].spacing(8).width(Fill)
-            )
-            .width(Length::Fixed(160.0))
-            .height(Fill)
-            .padding(8)
-            .style(container::bordered_box)
-            .into()
-        }
-        else
-        {
-            container(text(""))
-                .width(Length::Fixed(160.0))
-                .height(Fill)
-                .into()
-        };
-
-        // Main layout.
-        return row![room_list, center, member_list]
+        row![room_list, center, member_list]
             .spacing(0)
             .height(Fill)
             .width(Fill)
-            .into();
+            .into()
     }
 
     fn subscription(&self) -> iced::Subscription<Message>
