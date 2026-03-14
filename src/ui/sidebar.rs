@@ -1,0 +1,79 @@
+use iced::{ Element, Fill, Length };
+use iced::widget::{ button, column, container, row, scrollable, text };
+
+use crate::{ Message, Snack };
+use crate::ui::style;
+
+pub fn view(state: &Snack) -> Element<'_, Message>
+{
+    let sidebar_header = row![
+        text("Rooms").size(14),
+        text("").width(Fill),
+        button(text("+").size(14))
+            .on_press(Message::ShowJoinPanel)
+            .padding(4)
+            .style(button::text),
+    ].align_y(iced::Alignment::Center).width(Fill);
+
+    // Group rooms by server (part after @ in jid).
+    let mut servers: Vec<String> = Vec::new();
+    let mut grouped: Vec<(String, Vec<usize>)> = Vec::new();
+
+    for (i, r) in state.rooms.iter().enumerate()
+    {
+        let server = r.jid.split('@').nth(1).unwrap_or(&r.jid).to_string();
+        if let Some(pos) = servers.iter().position(|s| *s == server)
+        {
+            grouped[pos].1.push(i);
+        }
+        else
+        {
+            servers.push(server.clone());
+            grouped.push((server, vec![i]));
+        }
+    }
+
+    let mut items: Vec<Element<'_, Message>> = Vec::new();
+    for (server, indices) in &grouped
+    {
+        // Server header.
+        items.push(
+            text(server.clone()).size(12).into()
+        );
+
+        // Room entries with unread dot or empty space, aligned with server names.
+        for &i in indices
+        {
+            let r = &state.rooms[i];
+            let is_active = state.active_room == Some(i);
+            let icon = if r.unread { "\u{2022}" } else { " " };
+            let label = row![
+                text(icon).size(14),
+                text(&r.title).size(14),
+            ].spacing(6).align_y(iced::Alignment::Center);
+
+            let btn_style = if is_active { style::room_button_active } else { button::text };
+
+            let item = button(label)
+                .on_press(Message::SelectRoom(i))
+                .width(Fill)
+                .padding(6)
+                .style(btn_style);
+
+            items.push(item.into());
+        }
+    }
+
+    let list = scrollable(
+        column(items).spacing(2).width(Fill)
+    );
+
+    container(
+        column![sidebar_header, list].spacing(8).width(Fill)
+    )
+    .width(Length::Fixed(200.0))
+    .height(Fill)
+    .padding(8)
+    .style(container::bordered_box)
+    .into()
+}
