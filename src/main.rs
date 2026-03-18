@@ -7,6 +7,13 @@ mod ui;
 pub const MESSAGE_SCROLL_ID: &str = "message_scroll";
 pub const MESSAGE_INPUT_ID: &str = "message_input";
 pub const JOIN_INPUT_ID: &str = "join_input";
+pub const ACCOUNT_JID_INPUT_ID: &str = "account_jid_input";
+pub const ACCOUNT_PASSWORD_INPUT_ID: &str = "account_password_input";
+
+fn focus_jid_input() -> Task<Message>
+{
+    iced::widget::operation::focus(Id::new(ACCOUNT_JID_INPUT_ID))
+}
 
 fn focus_join_input() -> Task<Message>
 {
@@ -23,8 +30,20 @@ fn snap_to_bottom() -> Task<Message>
     iced::widget::operation::snap_to_end(Id::new(MESSAGE_SCROLL_ID))
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum AppState
+{
+    Login,
+    Connected,
+}
+
 pub struct Snack
 {
+    pub(crate) state: AppState,
+    pub(crate) jid_input: String,
+    pub(crate) password_input: String,
+    pub(crate) connected_jid: Option<String>,
+    pub(crate) connect_error: Option<String>,
     pub(crate) rooms: Vec<room::Room>,
     pub(crate) active_room: Option<usize>,
     pub(crate) message_input: String,
@@ -35,6 +54,14 @@ pub struct Snack
 #[derive(Debug, Clone)]
 pub enum Message
 {
+    Ignore,
+    TabPressed,
+    ShiftTabPressed,
+    JidInputChanged(String),
+    PasswordInputChanged(String),
+    FocusPassword,
+    Connect,
+    Disconnect,
     SelectRoom(usize),
     InputChanged(String),
     SendMessage,
@@ -62,20 +89,27 @@ impl Snack
 {
     fn new() -> (Self, Task<Message>)
     {
-        let rooms = vec![];
-
         (Self
         {
-            rooms,
+            state: AppState::Login,
+            jid_input: String::new(),
+            password_input: String::new(),
+            connected_jid: None,
+            connect_error: None,
+            rooms: Vec::new(),
             active_room: None,
             message_input: String::new(),
             show_join_panel: false,
             join_input: String::new(),
-        }, focus_input())
+        }, focus_jid_input())
     }
 
     fn title(&self) -> String
     {
+        if let Some(ref jid) = self.connected_jid
+        {
+            return format!("Snack — {}", jid);
+        }
         return "Snack".to_string();
     }
 
@@ -83,6 +117,58 @@ impl Snack
     {
         match message
         {
+            Message::Ignore => {}
+            Message::TabPressed =>
+            {
+                return iced::widget::operation::focus_next();
+            }
+            Message::ShiftTabPressed =>
+            {
+                return iced::widget::operation::focus_previous();
+            }
+            Message::JidInputChanged(value) =>
+            {
+                self.jid_input = value;
+            }
+            Message::PasswordInputChanged(value) =>
+            {
+                self.password_input = value;
+            }
+            Message::FocusPassword =>
+            {
+                return iced::widget::operation::focus(Id::new(ACCOUNT_PASSWORD_INPUT_ID));
+            }
+            Message::Connect =>
+            {
+                let jid = self.jid_input.trim().to_string();
+                let password = self.password_input.trim().to_string();
+                if jid.is_empty() || password.is_empty()
+                {
+                    self.connect_error = Some("JID and password are required.".to_string());
+                    return Task::none();
+                }
+                if !jid.contains('@')
+                {
+                    self.connect_error = Some("JID must be in the format user@domain.".to_string());
+                    return Task::none();
+                }
+                self.connected_jid = Some(jid);
+                self.connect_error = None;
+                self.password_input.clear();
+                self.state = AppState::Connected;
+                return focus_input();
+            }
+            Message::Disconnect =>
+            {
+                self.state = AppState::Login;
+                self.connected_jid = None;
+                self.rooms.clear();
+                self.active_room = None;
+                self.message_input.clear();
+                self.show_join_panel = false;
+                self.join_input.clear();
+                return focus_jid_input();
+            }
             Message::SelectRoom(index) =>
             {
                 self.active_room = Some(index);
@@ -171,20 +257,44 @@ impl Snack
 
     fn view(&self) -> Element<'_, Message>
     {
-        let room_list = ui::sidebar::view(self);
-        let center = ui::chat::view(self);
-        let member_list = ui::members::view(self);
+        match self.state
+        {
+            AppState::Login =>
+            {
+                return ui::account::view(self);
+            }
+            AppState::Connected =>
+            {
+                let room_list = ui::sidebar::view(self);
+                let center = ui::chat::view(self);
+                let member_list = ui::members::view(self);
 
-        row![room_list, center, member_list]
-            .spacing(0)
-            .height(Fill)
-            .width(Fill)
-            .into()
+                row![room_list, center, member_list]
+                    .spacing(0)
+                    .height(Fill)
+                    .width(Fill)
+                    .into()
+            }
+        }
     }
 
     fn subscription(&self) -> iced::Subscription<Message>
     {
-        iced::Subscription::none()
+        iced::keyboard::listen().map(|event|
+        {
+            if let iced::keyboard::Event::KeyPressed { key, modifiers, .. } = event
+            {
+                if key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab)
+                {
+                    if modifiers.shift()
+                    {
+                        return Message::ShiftTabPressed;
+                    }
+                    return Message::TabPressed;
+                }
+            }
+            Message::Ignore
+        })
     }
 
     fn theme(&self) -> Theme

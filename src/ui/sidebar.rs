@@ -6,6 +6,25 @@ use crate::ui::style;
 
 pub fn view(state: &Snack) -> Element<'_, Message>
 {
+    let account_label = if let Some(ref jid) = state.connected_jid
+    {
+        text(jid.clone()).size(12)
+    }
+    else
+    {
+        text("Not connected").size(12)
+    };
+
+    let disconnect_btn = button(text("Disconnect").size(11))
+        .on_press(Message::Disconnect)
+        .padding(4)
+        .style(button::text);
+
+    let account_row = column![
+        account_label,
+        disconnect_btn,
+    ].spacing(4).width(Fill);
+
     let sidebar_header = row![
         text("Rooms").size(14),
         text("").width(Fill),
@@ -69,7 +88,7 @@ pub fn view(state: &Snack) -> Element<'_, Message>
     );
 
     container(
-        column![sidebar_header, list].spacing(8).width(Fill)
+        column![account_row, sidebar_header, list].spacing(8).width(Fill)
     )
     .width(Length::Fixed(200.0))
     .height(Fill)
