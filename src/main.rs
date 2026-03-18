@@ -110,6 +110,7 @@ impl Snack
         {
             return format!("Snack — {}", jid);
         }
+
         return "Snack".to_string();
     }
 
@@ -142,20 +143,24 @@ impl Snack
             {
                 let jid = self.jid_input.trim().to_string();
                 let password = self.password_input.trim().to_string();
+
                 if jid.is_empty() || password.is_empty()
                 {
                     self.connect_error = Some("JID and password are required.".to_string());
                     return Task::none();
                 }
+
                 if !jid.contains('@')
                 {
                     self.connect_error = Some("JID must be in the format user@domain.".to_string());
                     return Task::none();
                 }
+
                 self.connected_jid = Some(jid);
                 self.connect_error = None;
                 self.password_input.clear();
                 self.state = AppState::Connected;
+
                 return focus_input();
             }
             Message::Disconnect =>
@@ -167,12 +172,14 @@ impl Snack
                 self.message_input.clear();
                 self.show_join_panel = false;
                 self.join_input.clear();
+
                 return focus_jid_input();
             }
             Message::SelectRoom(index) =>
             {
                 self.active_room = Some(index);
                 self.show_join_panel = false;
+
                 return Task::batch([snap_to_bottom(), focus_input()]);
             }
             Message::InputChanged(value) =>
@@ -184,6 +191,7 @@ impl Snack
                 if let Some(index) = self.active_room
                 {
                     let body = self.message_input.trim().to_string();
+
                     if !body.is_empty()
                     {
                         self.rooms[index].messages.push(room::message::Message
@@ -203,11 +211,13 @@ impl Snack
             {
                 self.show_join_panel = true;
                 self.join_input.clear();
+
                 return focus_join_input();
             }
             Message::HideJoinPanel =>
             {
                 self.show_join_panel = false;
+
                 return focus_input();
             }
             Message::JoinInputChanged(value) =>
@@ -217,9 +227,11 @@ impl Snack
             Message::JoinRoom =>
             {
                 let jid = self.join_input.trim().to_string();
+
                 if !jid.is_empty()
                 {
                     let title = jid.split('@').next().unwrap_or(&jid).to_string();
+
                     self.rooms.push(room::Room
                     {
                         jid,
@@ -229,9 +241,11 @@ impl Snack
                         messages: Vec::new(),
                         unread: false,
                     });
+
                     self.active_room = Some(self.rooms.len() - 1);
                     self.show_join_panel = false;
                     self.join_input.clear();
+
                     return focus_input();
                 }
             }
@@ -240,6 +254,7 @@ impl Snack
                 if let Some(index) = self.active_room
                 {
                     self.rooms.remove(index);
+
                     if self.rooms.is_empty()
                     {
                         self.active_room = None;
@@ -248,6 +263,7 @@ impl Snack
                     {
                         self.active_room = Some(self.rooms.len() - 1);
                     }
+
                     return focus_input();
                 }
             }

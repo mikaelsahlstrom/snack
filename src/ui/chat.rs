@@ -34,6 +34,7 @@ pub fn view(state: &Snack) -> Element<'_, Message>
 
         // Message list.
         let today = chrono::Local::now().date_naive();
+
         let messages: Vec<Element<'_, Message>> = room.messages.iter().map(|m|
         {
             let local_time = m.received.with_timezone(&chrono::Local);

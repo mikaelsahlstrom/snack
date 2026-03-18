@@ -34,13 +34,14 @@ pub fn view(state: &Snack) -> Element<'_, Message>
             .style(button::text),
     ].align_y(iced::Alignment::Center).width(Fill);
 
-    // Group rooms by server (part after @ in jid).
+    // Group rooms by server.
     let mut servers: Vec<String> = Vec::new();
     let mut grouped: Vec<(String, Vec<usize>)> = Vec::new();
 
     for (i, r) in state.rooms.iter().enumerate()
     {
         let server = r.jid.split('@').nth(1).unwrap_or(&r.jid).to_string();
+
         if let Some(pos) = servers.iter().position(|s| *s == server)
         {
             grouped[pos].1.push(i);
@@ -53,6 +54,7 @@ pub fn view(state: &Snack) -> Element<'_, Message>
     }
 
     let mut items: Vec<Element<'_, Message>> = Vec::new();
+
     for (server, indices) in &grouped
     {
         // Server header.
