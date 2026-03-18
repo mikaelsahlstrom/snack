@@ -3,6 +3,7 @@ use iced::widget::{ row, Id };
 
 mod room;
 mod ui;
+mod xmpp;
 
 pub const MESSAGE_SCROLL_ID: &str = "message_scroll";
 pub const MESSAGE_INPUT_ID: &str = "message_input";
@@ -34,6 +35,7 @@ fn snap_to_bottom() -> Task<Message>
 pub enum AppState
 {
     Login,
+    Connecting,
     Connected,
 }
 
@@ -43,6 +45,7 @@ pub struct Snack
     pub(crate) jid_input: String,
     pub(crate) password_input: String,
     pub(crate) connected_jid: Option<String>,
+    pub(crate) connected_password: Option<String>,
     pub(crate) connect_error: Option<String>,
     pub(crate) rooms: Vec<room::Room>,
     pub(crate) active_room: Option<usize>,
@@ -61,6 +64,7 @@ pub enum Message
     PasswordInputChanged(String),
     FocusPassword,
     Connect,
+    XmppEvent(xmpp::XmppEvent),
     Disconnect,
     SelectRoom(usize),
     InputChanged(String),
@@ -74,6 +78,8 @@ pub enum Message
 
 fn main() -> iced::Result
 {
+    env_logger::init();
+    let _ = rustls::crypto::ring::default_provider().install_default();
     return application().run();
 }
 
@@ -95,6 +101,7 @@ impl Snack
             jid_input: String::new(),
             password_input: String::new(),
             connected_jid: None,
+            connected_password: None,
             connect_error: None,
             rooms: Vec::new(),
             active_room: None,
@@ -157,16 +164,99 @@ impl Snack
                 }
 
                 self.connected_jid = Some(jid);
+                self.connected_password = Some(password);
                 self.connect_error = None;
-                self.password_input.clear();
-                self.state = AppState::Connected;
+                self.state = AppState::Connecting;
 
-                return focus_input();
+                return Task::none();
+            }
+            Message::XmppEvent(event) =>
+            {
+                match event
+                {
+                    xmpp::XmppEvent::Connected =>
+                    {
+                        self.password_input.clear();
+                        self.state = AppState::Connected;
+                        return focus_input();
+                    }
+                    xmpp::XmppEvent::Disconnected(reason) =>
+                    {
+                        self.connect_error = Some(reason);
+                        self.connected_password = None;
+                        self.state = AppState::Login;
+                        self.rooms.clear();
+                        self.active_room = None;
+                        return focus_jid_input();
+                    }
+                    xmpp::XmppEvent::RoomJoined(jid) =>
+                    {
+                        let already = self.rooms.iter().any(|r| r.jid == jid);
+                        if !already
+                        {
+                            let title = jid.split('@').next().unwrap_or(&jid).to_string();
+                            self.rooms.push(room::Room
+                            {
+                                jid,
+                                title,
+                                topic: String::new(),
+                                users: Vec::new(),
+                                messages: Vec::new(),
+                                unread: false,
+                            });
+                        }
+                    }
+                    xmpp::XmppEvent::RoomLeft(jid) =>
+                    {
+                        if let Some(pos) = self.rooms.iter().position(|r| r.jid == jid)
+                        {
+                            self.rooms.remove(pos);
+                            if self.active_room == Some(pos)
+                            {
+                                self.active_room = None;
+                            }
+                            else if let Some(active) = self.active_room
+                            {
+                                if active > pos
+                                {
+                                    self.active_room = Some(active - 1);
+                                }
+                            }
+                        }
+                    }
+                    xmpp::XmppEvent::RoomMessage { room, nick, body, timestamp } =>
+                    {
+                        let room_idx = self.rooms.iter().position(|r| r.jid == room);
+                        if let Some(idx) = room_idx
+                        {
+                            self.rooms[idx].messages.push(room::message::Message
+                            {
+                                from: nick,
+                                body,
+                                received: timestamp,
+                            });
+                            let is_active = self.active_room == Some(idx);
+                            if !is_active
+                            {
+                                self.rooms[idx].unread = true;
+                            }
+                            return snap_to_bottom();
+                        }
+                    }
+                    xmpp::XmppEvent::RoomSubject { room, subject } =>
+                    {
+                        if let Some(r) = self.rooms.iter_mut().find(|r| r.jid == room)
+                        {
+                            r.topic = subject;
+                        }
+                    }
+                }
             }
             Message::Disconnect =>
             {
                 self.state = AppState::Login;
                 self.connected_jid = None;
+                self.connected_password = None;
                 self.rooms.clear();
                 self.active_room = None;
                 self.message_input.clear();
@@ -275,7 +365,7 @@ impl Snack
     {
         match self.state
         {
-            AppState::Login =>
+            AppState::Login | AppState::Connecting =>
             {
                 return ui::account::view(self);
             }
@@ -296,7 +386,7 @@ impl Snack
 
     fn subscription(&self) -> iced::Subscription<Message>
     {
-        iced::keyboard::listen().map(|event|
+        let keyboard = iced::keyboard::listen().map(|event|
         {
             if let iced::keyboard::Event::KeyPressed { key, modifiers, .. } = event
             {
@@ -310,7 +400,40 @@ impl Snack
                 }
             }
             Message::Ignore
-        })
+        });
+
+        match (&self.state, &self.connected_jid, &self.connected_password)
+        {
+            (AppState::Connecting, Some(jid), Some(password)) =>
+            {
+                let xmpp_sub = iced::Subscription::run_with(
+                    (jid.clone(), password.clone()),
+                    |data: &(String, String)|
+                    {
+                        let jid = data.0.clone();
+                        let password = data.1.clone();
+                        xmpp::connect(jid, password)
+                    },
+                ).map(Message::XmppEvent);
+
+                iced::Subscription::batch([keyboard, xmpp_sub])
+            }
+            (AppState::Connected, Some(jid), Some(password)) =>
+            {
+                let xmpp_sub = iced::Subscription::run_with(
+                    (jid.clone(), password.clone()),
+                    |data: &(String, String)|
+                    {
+                        let jid = data.0.clone();
+                        let password = data.1.clone();
+                        xmpp::connect(jid, password)
+                    },
+                ).map(Message::XmppEvent);
+
+                iced::Subscription::batch([keyboard, xmpp_sub])
+            }
+            _ => keyboard,
+        }
     }
 
     fn theme(&self) -> Theme
