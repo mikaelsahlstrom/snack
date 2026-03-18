@@ -80,10 +80,6 @@ pub fn view(state: &Snack) -> Element<'_, Message>
     }
     else
     {
-        container(text("Select a room").size(16))
-            .center(Fill)
-            .width(Fill)
-            .height(Fill)
-            .into()
+        join::view(state)
     }
 }

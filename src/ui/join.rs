@@ -16,16 +16,22 @@ pub fn view(state: &Snack) -> Element<'_, Message>
         .on_press(Message::JoinRoom)
         .padding(10);
 
-    let cancel_btn = button(text("Cancel").size(14))
-        .on_press(Message::HideJoinPanel)
-        .padding(10)
-        .style(button::text);
+    let mut buttons = row![].spacing(8);
+    if state.active_room.is_some()
+    {
+        let cancel_btn = button(text("Cancel").size(14))
+            .on_press(Message::HideJoinPanel)
+            .padding(10)
+            .style(button::text);
+        buttons = buttons.push(cancel_btn);
+    }
+    buttons = buttons.push(join_btn);
 
     container(
         column![
             text("Join a room").size(18),
             join_input,
-            row![cancel_btn, join_btn].spacing(8),
+            buttons,
         ].spacing(12).align_x(iced::Alignment::Center)
     )
     .center(Fill)

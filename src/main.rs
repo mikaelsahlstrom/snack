@@ -62,69 +62,12 @@ impl Snack
 {
     fn new() -> (Self, Task<Message>)
     {
-        let rooms = vec![
-            room::Room
-            {
-                jid: "rust@chat.example.org".to_string(),
-                title: "Rust".to_string(),
-                topic: "Rust programming discussion".to_string(),
-                users: vec![
-                    room::user::User { jid: "alice@example.org".into(), name: "Alice".into() },
-                    room::user::User { jid: "bob@example.org".into(), name: "Bob".into() },
-                ],
-                messages: vec![
-                    room::message::Message { from: "Alice".into(), body: "Hello everyone!".into(), received: chrono::Utc::now() },
-                    room::message::Message { from: "Bob".into(), body: "Hey Alice!".into(), received: chrono::Utc::now() },
-                ],
-                unread: true,
-            },
-            room::Room
-            {
-                jid: "xmpp@chat.example.org".to_string(),
-                title: "XMPP".to_string(),
-                topic: "XMPP discussion".to_string(),
-                users: vec![
-                    room::user::User { jid: "charlie@example.org".into(), name: "Charlie".into() },
-                ],
-                messages: vec![
-                    room::message::Message { from: "Charlie".into(), body: "Welcome to XMPP!".into(), received: chrono::Utc::now() },
-                ],
-                unread: false,
-            },
-            room::Room
-            {
-                jid: "linux@conference.jabber.org".to_string(),
-                title: "Linux".to_string(),
-                topic: "Linux and open source".to_string(),
-                users: vec![
-                    room::user::User { jid: "dave@jabber.org".into(), name: "Dave".into() },
-                    room::user::User { jid: "eve@jabber.org".into(), name: "Eve".into() },
-                ],
-                messages: vec![
-                    room::message::Message { from: "Dave".into(), body: "Anyone tried the new kernel?".into(), received: chrono::Utc::now() },
-                    room::message::Message { from: "Eve".into(), body: "Yes, it's great!".into(), received: chrono::Utc::now() },
-                ],
-                unread: true,
-            },
-            room::Room
-            {
-                jid: "gaming@conference.jabber.org".to_string(),
-                title: "Gaming".to_string(),
-                topic: "PC and console gaming".to_string(),
-                users: vec![
-                    room::user::User { jid: "frank@jabber.org".into(), name: "Frank".into() },
-                ],
-                messages: vec![
-                    room::message::Message { from: "Frank".into(), body: "What are you all playing?".into(), received: chrono::Utc::now() },
-                ],
-                unread: false,
-            },
-        ];
+        let rooms = vec![];
 
         (Self
         {
             rooms,
-            active_room: Some(0),
+            active_room: None,
             message_input: String::new(),
             show_join_panel: false,
             join_input: String::new(),
