@@ -6,7 +6,7 @@ use crate::ui::join;
 
 pub fn view(state: &Snack) -> Element<'_, Message>
 {
-    if state.show_join_panel
+    if state.show_join_panel || state.joining_room.is_some() || state.join_error.is_some()
     {
         return join::view(state);
     }

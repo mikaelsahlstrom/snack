@@ -52,6 +52,8 @@ pub struct Snack
     pub(crate) active_room: Option<usize>,
     pub(crate) message_input: String,
     pub(crate) show_join_panel: bool,
+    pub(crate) joining_room: Option<String>,
+    pub(crate) join_error: Option<String>,
     pub(crate) join_input: String,
     pub(crate) xmpp_cmd_tx: Option<tokio::sync::mpsc::Sender<xmpp::XmppCommand>>,
     pub(crate) xmpp_cmd_rx: Option<xmpp::CommandChannel>,
@@ -76,6 +78,7 @@ pub enum Message
     HideJoinPanel,
     JoinInputChanged(String),
     JoinRoom,
+    DismissJoinError,
     LeaveRoom,
 }
 
@@ -110,6 +113,8 @@ impl Snack
             active_room: None,
             message_input: String::new(),
             show_join_panel: false,
+            joining_room: None,
+            join_error: None,
             join_input: String::new(),
             xmpp_cmd_tx: None,
             xmpp_cmd_rx: None,
@@ -190,7 +195,7 @@ impl Snack
                     {
                         self.password_input.clear();
                         self.state = AppState::Connected;
-                        return focus_input();
+                        return focus_join_input();
                     }
                     xmpp::XmppEvent::Disconnected(reason) =>
                     {
@@ -204,8 +209,13 @@ impl Snack
                     }
                     xmpp::XmppEvent::RoomJoined(jid) =>
                     {
-                        let already = self.rooms.iter().any(|r| r.jid == jid);
-                        if !already
+                        self.joining_room = None;
+                        self.join_error = None;
+                        if let Some(pos) = self.rooms.iter().position(|r| r.jid == jid)
+                        {
+                            self.active_room = Some(pos);
+                        }
+                        else
                         {
                             let title = jid.split('@').next().unwrap_or(&jid).to_string();
                             self.rooms.push(room::Room
@@ -218,9 +228,15 @@ impl Snack
                                 unread: false,
                             });
                             self.active_room = Some(self.rooms.len() - 1);
-                            self.show_join_panel = false;
-                            return Task::batch([snap_to_bottom(), focus_input()]);
                         }
+                        self.show_join_panel = false;
+                        return Task::batch([snap_to_bottom(), focus_input()]);
+                    }
+                    xmpp::XmppEvent::RoomJoinFailed { room: _, reason } =>
+                    {
+                        self.joining_room = None;
+                        self.join_error = Some(reason);
+                        return focus_join_input();
                     }
                     xmpp::XmppEvent::RoomLeft(jid) =>
                     {
@@ -277,6 +293,8 @@ impl Snack
                 self.active_room = None;
                 self.message_input.clear();
                 self.show_join_panel = false;
+                self.joining_room = None;
+                self.join_error = None;
                 self.join_input.clear();
                 self.xmpp_cmd_tx = None;
                 self.xmpp_cmd_rx = None;
@@ -326,6 +344,8 @@ impl Snack
             {
                 self.show_join_panel = true;
                 self.join_input.clear();
+                self.join_error = None;
+                self.joining_room = None;
 
                 return focus_join_input();
             }
@@ -345,30 +365,53 @@ impl Snack
 
                 if !jid.is_empty()
                 {
+                    // If already in this room, just switch to it.
+                    if let Some(pos) = self.rooms.iter().position(|r| r.jid == jid)
+                    {
+                        self.active_room = Some(pos);
+                        self.show_join_panel = false;
+                        self.join_input.clear();
+                        self.join_error = None;
+                        return Task::batch([snap_to_bottom(), focus_input()]);
+                    }
+
                     if let Some(ref tx) = self.xmpp_cmd_tx
                     {
-                        let _ = tx.try_send(xmpp::XmppCommand::JoinRoom(jid));
+                        let _ = tx.try_send(xmpp::XmppCommand::JoinRoom(jid.clone()));
                     }
-                    self.show_join_panel = false;
-                    self.join_input.clear();
+
+                    self.joining_room = Some(jid);
+                    self.join_error = None;
                 }
+            }
+            Message::DismissJoinError =>
+            {
+                self.join_error = None;
+                return focus_join_input();
             }
             Message::LeaveRoom =>
             {
                 if let Some(index) = self.active_room
                 {
-                    self.rooms.remove(index);
+                    let room_jid = self.rooms[index].jid.clone();
 
-                    if self.rooms.is_empty()
+                    if let Some(ref tx) = self.xmpp_cmd_tx
                     {
-                        self.active_room = None;
-                    }
-                    else if index >= self.rooms.len()
-                    {
-                        self.active_room = Some(self.rooms.len() - 1);
+                        // Derive nick the same way the XMPP thread does.
+                        let nick = self.connected_jid
+                            .as_deref()
+                            .and_then(|j| j.split('@').next())
+                            .unwrap_or("user")
+                            .to_string();
+
+                        let _ = tx.try_send(xmpp::XmppCommand::LeaveRoom
+                        {
+                            room: room_jid,
+                            nick,
+                        });
                     }
 
-                    return focus_input();
+                    // Room removal is driven by XmppEvent::RoomLeft.
                 }
             }
         }
