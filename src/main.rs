@@ -1,5 +1,6 @@
 use iced::{ Application, Element, Program, Task, Theme, Fill };
 use iced::widget::{ row, Id };
+use log::error;
 
 mod room;
 mod ui;
@@ -52,6 +53,8 @@ pub struct Snack
     pub(crate) message_input: String,
     pub(crate) show_join_panel: bool,
     pub(crate) join_input: String,
+    pub(crate) xmpp_cmd_tx: Option<tokio::sync::mpsc::Sender<xmpp::XmppCommand>>,
+    pub(crate) xmpp_cmd_rx: Option<xmpp::CommandChannel>,
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +111,8 @@ impl Snack
             message_input: String::new(),
             show_join_panel: false,
             join_input: String::new(),
+            xmpp_cmd_tx: None,
+            xmpp_cmd_rx: None,
         }, focus_jid_input())
     }
 
@@ -153,12 +158,14 @@ impl Snack
 
                 if jid.is_empty() || password.is_empty()
                 {
+                    error!("Connection failed: JID and password are required");
                     self.connect_error = Some("JID and password are required.".to_string());
                     return Task::none();
                 }
 
                 if !jid.contains('@')
                 {
+                    error!("Connection failed: invalid JID format '{}'", jid);
                     self.connect_error = Some("JID must be in the format user@domain.".to_string());
                     return Task::none();
                 }
@@ -166,6 +173,11 @@ impl Snack
                 self.connected_jid = Some(jid);
                 self.connected_password = Some(password);
                 self.connect_error = None;
+
+                let (cmd_tx, cmd_rx) = xmpp::new_command_channel();
+                self.xmpp_cmd_tx = Some(cmd_tx);
+                self.xmpp_cmd_rx = Some(cmd_rx);
+
                 self.state = AppState::Connecting;
 
                 return Task::none();
@@ -182,6 +194,7 @@ impl Snack
                     }
                     xmpp::XmppEvent::Disconnected(reason) =>
                     {
+                        error!("Disconnected: {}", reason);
                         self.connect_error = Some(reason);
                         self.connected_password = None;
                         self.state = AppState::Login;
@@ -204,6 +217,9 @@ impl Snack
                                 messages: Vec::new(),
                                 unread: false,
                             });
+                            self.active_room = Some(self.rooms.len() - 1);
+                            self.show_join_panel = false;
+                            return Task::batch([snap_to_bottom(), focus_input()]);
                         }
                     }
                     xmpp::XmppEvent::RoomLeft(jid) =>
@@ -262,6 +278,8 @@ impl Snack
                 self.message_input.clear();
                 self.show_join_panel = false;
                 self.join_input.clear();
+                self.xmpp_cmd_tx = None;
+                self.xmpp_cmd_rx = None;
 
                 return focus_jid_input();
             }
@@ -269,6 +287,10 @@ impl Snack
             {
                 self.active_room = Some(index);
                 self.show_join_panel = false;
+                if let Some(r) = self.rooms.get_mut(index)
+                {
+                    r.unread = false;
+                }
 
                 return Task::batch([snap_to_bottom(), focus_input()]);
             }
@@ -284,12 +306,15 @@ impl Snack
 
                     if !body.is_empty()
                     {
-                        self.rooms[index].messages.push(room::message::Message
+                        if let Some(ref tx) = self.xmpp_cmd_tx
                         {
-                            from: "You".to_string(),
-                            body,
-                            received: chrono::Utc::now(),
-                        });
+                            let room_jid = self.rooms[index].jid.clone();
+                            let _ = tx.try_send(xmpp::XmppCommand::SendRoomMessage
+                            {
+                                room: room_jid,
+                                body: body.clone(),
+                            });
+                        }
 
                         self.message_input.clear();
 
@@ -320,23 +345,12 @@ impl Snack
 
                 if !jid.is_empty()
                 {
-                    let title = jid.split('@').next().unwrap_or(&jid).to_string();
-
-                    self.rooms.push(room::Room
+                    if let Some(ref tx) = self.xmpp_cmd_tx
                     {
-                        jid,
-                        title,
-                        topic: String::new(),
-                        users: Vec::new(),
-                        messages: Vec::new(),
-                        unread: false,
-                    });
-
-                    self.active_room = Some(self.rooms.len() - 1);
+                        let _ = tx.try_send(xmpp::XmppCommand::JoinRoom(jid));
+                    }
                     self.show_join_panel = false;
                     self.join_input.clear();
-
-                    return focus_input();
                 }
             }
             Message::LeaveRoom =>
@@ -404,33 +418,24 @@ impl Snack
 
         match (&self.state, &self.connected_jid, &self.connected_password)
         {
-            (AppState::Connecting, Some(jid), Some(password)) =>
+            (AppState::Connecting | AppState::Connected, Some(jid), Some(password)) =>
             {
-                let xmpp_sub = iced::Subscription::run_with(
-                    (jid.clone(), password.clone()),
-                    |data: &(String, String)|
-                    {
-                        let jid = data.0.clone();
-                        let password = data.1.clone();
-                        xmpp::connect(jid, password)
-                    },
-                ).map(Message::XmppEvent);
+                if let Some(cmd_rx) = &self.xmpp_cmd_rx
+                {
+                    let xmpp_sub = iced::Subscription::run_with(
+                        (jid.clone(), password.clone(), cmd_rx.clone()),
+                        |data: &(String, String, xmpp::CommandChannel)|
+                        {
+                            xmpp::connect(data.0.clone(), data.1.clone(), data.2.clone())
+                        },
+                    ).map(Message::XmppEvent);
 
-                iced::Subscription::batch([keyboard, xmpp_sub])
-            }
-            (AppState::Connected, Some(jid), Some(password)) =>
-            {
-                let xmpp_sub = iced::Subscription::run_with(
-                    (jid.clone(), password.clone()),
-                    |data: &(String, String)|
-                    {
-                        let jid = data.0.clone();
-                        let password = data.1.clone();
-                        xmpp::connect(jid, password)
-                    },
-                ).map(Message::XmppEvent);
-
-                iced::Subscription::batch([keyboard, xmpp_sub])
+                    iced::Subscription::batch([keyboard, xmpp_sub])
+                }
+                else
+                {
+                    keyboard
+                }
             }
             _ => keyboard,
         }
