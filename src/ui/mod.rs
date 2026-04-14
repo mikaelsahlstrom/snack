@@ -1,4 +1,5 @@
 pub mod style;
+pub mod account;
 pub mod sidebar;
 pub mod chat;
 pub mod join;

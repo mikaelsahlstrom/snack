@@ -6,6 +6,25 @@ use crate::ui::style;
 
 pub fn view(state: &Snack) -> Element<'_, Message>
 {
+    let account_label = if let Some(ref jid) = state.connected_jid
+    {
+        text(jid.clone()).size(12)
+    }
+    else
+    {
+        text("Not connected").size(12)
+    };
+
+    let disconnect_btn = button(text("Disconnect").size(11))
+        .on_press(Message::Disconnect)
+        .padding(4)
+        .style(button::text);
+
+    let account_row = column![
+        account_label,
+        disconnect_btn,
+    ].spacing(4).width(Fill);
+
     let sidebar_header = row![
         text("Rooms").size(14),
         text("").width(Fill),
@@ -15,13 +34,14 @@ pub fn view(state: &Snack) -> Element<'_, Message>
             .style(button::text),
     ].align_y(iced::Alignment::Center).width(Fill);
 
-    // Group rooms by server (part after @ in jid).
+    // Group rooms by server.
     let mut servers: Vec<String> = Vec::new();
     let mut grouped: Vec<(String, Vec<usize>)> = Vec::new();
 
     for (i, r) in state.rooms.iter().enumerate()
     {
         let server = r.jid.split('@').nth(1).unwrap_or(&r.jid).to_string();
+
         if let Some(pos) = servers.iter().position(|s| *s == server)
         {
             grouped[pos].1.push(i);
@@ -34,6 +54,7 @@ pub fn view(state: &Snack) -> Element<'_, Message>
     }
 
     let mut items: Vec<Element<'_, Message>> = Vec::new();
+
     for (server, indices) in &grouped
     {
         // Server header.
@@ -47,9 +68,18 @@ pub fn view(state: &Snack) -> Element<'_, Message>
             let r = &state.rooms[i];
             let is_active = state.active_room == Some(i);
             let icon = if r.unread { "\u{2022}" } else { " " };
+            let title_text = if r.unread
+            {
+                text(&r.title).size(14).font(iced::Font { weight: iced::font::Weight::Bold, ..Default::default() })
+            }
+            else
+            {
+                text(&r.title).size(14)
+            };
+
             let label = row![
                 text(icon).size(14),
-                text(&r.title).size(14),
+                title_text,
             ].spacing(6).align_y(iced::Alignment::Center);
 
             let btn_style = if is_active { style::room_button_active } else { button::text };
@@ -68,12 +98,12 @@ pub fn view(state: &Snack) -> Element<'_, Message>
         column(items).spacing(2).width(Fill)
     );
 
-    container(
-        column![sidebar_header, list].spacing(8).width(Fill)
+    return container(
+        column![account_row, sidebar_header, list].spacing(8).width(Fill)
     )
     .width(Length::Fixed(200.0))
     .height(Fill)
     .padding(8)
     .style(container::bordered_box)
-    .into()
+    .into();
 }
