@@ -122,7 +122,17 @@ pub fn view(state: &Snack) -> Element<'_, Message>
                 .spacing(4).width(Fill);
 
             let is_mention = my_nick.as_ref()
-                .is_some_and(|nick| m.body.to_lowercase().contains(nick));
+                .is_some_and(|nick|
+                {
+                    let body = m.body.to_lowercase();
+                    body.match_indices(nick.as_str()).any(|(start, matched)|
+                    {
+                        let end = start + matched.len();
+                        let before_ok = start == 0 || !body.as_bytes()[start - 1].is_ascii_alphanumeric();
+                        let after_ok = end == body.len() || !body.as_bytes()[end].is_ascii_alphanumeric();
+                        before_ok && after_ok
+                    })
+                });
 
             let msg_container = container(msg_row).padding(4).width(Fill);
 

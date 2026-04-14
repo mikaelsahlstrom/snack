@@ -11,10 +11,19 @@ pub enum XmppCommand
     SendRoomMessage { room: String, body: String },
 }
 
+struct ChannelInner
+{
+    rx: Option<tokio::sync::mpsc::Receiver<XmppCommand>>,
+    jid: String,
+    password: String,
+}
+
 /// A cloneable handle to the command receiver, used as part of the subscription key.
 /// Equality and hashing are by pointer identity so the same channel maps to the same subscription.
+/// Holds the credentials so they are consumed once when the connection starts and never
+/// kept in the long-lived application state.
 #[derive(Clone)]
-pub struct CommandChannel(Arc<Mutex<Option<tokio::sync::mpsc::Receiver<XmppCommand>>>>);
+pub struct CommandChannel(Arc<Mutex<ChannelInner>>);
 
 impl PartialEq for CommandChannel
 {
@@ -34,10 +43,10 @@ impl std::hash::Hash for CommandChannel
     }
 }
 
-pub fn new_command_channel() -> (tokio::sync::mpsc::Sender<XmppCommand>, CommandChannel)
+pub fn new_command_channel(jid: String, password: String) -> (tokio::sync::mpsc::Sender<XmppCommand>, CommandChannel)
 {
     let (tx, rx) = tokio::sync::mpsc::channel(100);
-    (tx, CommandChannel(Arc::new(Mutex::new(Some(rx)))))
+    (tx, CommandChannel(Arc::new(Mutex::new(ChannelInner { rx: Some(rx), jid, password }))))
 }
 
 #[derive(Debug, Clone)]
@@ -64,12 +73,20 @@ pub enum XmppEvent
     },
 }
 
-pub fn connect(jid: String, password: String, cmd: CommandChannel) -> impl iced::futures::Stream<Item = XmppEvent>
+pub fn connect(cmd: CommandChannel) -> impl iced::futures::Stream<Item = XmppEvent>
 {
     stream::channel(100, async move |mut output|
     {
-        let cmd_rx_opt = cmd.0.lock().unwrap().take();
-        let mut cmd_rx = match cmd_rx_opt
+        let (cmd_rx, jid, password) =
+        {
+            let mut inner = cmd.0.lock().unwrap();
+            let rx = inner.rx.take();
+            let jid = std::mem::take(&mut inner.jid);
+            let password = std::mem::take(&mut inner.password);
+            (rx, jid, password)
+        };
+
+        let mut cmd_rx = match cmd_rx
         {
             Some(rx) => rx,
             None =>
@@ -119,6 +136,10 @@ pub fn connect(jid: String, password: String, cmd: CommandChannel) -> impl iced:
                                         ::xmpp::XmppEvent::RoomJoined { room, members } =>
                                         {
                                             Some(XmppEvent::RoomJoined { room, members })
+                                        }
+                                        ::xmpp::XmppEvent::RoomLeft(room) =>
+                                        {
+                                            Some(XmppEvent::RoomLeft(room))
                                         }
                                         ::xmpp::XmppEvent::MemberJoined { room, member } =>
                                         {
@@ -180,9 +201,12 @@ pub fn connect(jid: String, password: String, cmd: CommandChannel) -> impl iced:
                                         error!("Failed to send message: {}", e);
                                     }
                                 }
-                                Some(XmppCommand::LeaveRoom { .. }) =>
+                                Some(XmppCommand::LeaveRoom { room, nick }) =>
                                 {
-                                    // Not yet supported by libxmpp
+                                    if let Err(e) = client.leave_room(&room, &nick).await
+                                    {
+                                        error!("Failed to leave room: {}", e);
+                                    }
                                 }
                                 None => break,
                             }

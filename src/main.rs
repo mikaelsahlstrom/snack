@@ -46,7 +46,6 @@ pub struct Snack
     pub(crate) jid_input: String,
     pub(crate) password_input: String,
     pub(crate) connected_jid: Option<String>,
-    pub(crate) connected_password: Option<String>,
     pub(crate) connect_error: Option<String>,
     pub(crate) rooms: Vec<room::Room>,
     pub(crate) active_room: Option<usize>,
@@ -107,7 +106,6 @@ impl Snack
             jid_input: String::new(),
             password_input: String::new(),
             connected_jid: None,
-            connected_password: None,
             connect_error: None,
             rooms: Vec::new(),
             active_room: None,
@@ -159,7 +157,7 @@ impl Snack
             Message::Connect =>
             {
                 let jid = self.jid_input.trim().to_string();
-                let password = self.password_input.trim().to_string();
+                let password = self.password_input.clone();
 
                 if jid.is_empty() || password.is_empty()
                 {
@@ -177,11 +175,10 @@ impl Snack
                     return Task::none();
                 }
 
-                self.connected_jid = Some(jid);
-                self.connected_password = Some(password);
+                self.connected_jid = Some(jid.clone());
                 self.connect_error = None;
 
-                let (cmd_tx, cmd_rx) = xmpp::new_command_channel();
+                let (cmd_tx, cmd_rx) = xmpp::new_command_channel(jid, password);
                 self.xmpp_cmd_tx = Some(cmd_tx);
                 self.xmpp_cmd_rx = Some(cmd_rx);
 
@@ -206,10 +203,17 @@ impl Snack
                         error!("Disconnected: {}", reason);
 
                         self.connect_error = Some(reason);
-                        self.connected_password = None;
+                        self.connected_jid = None;
                         self.state = AppState::Login;
                         self.rooms.clear();
                         self.active_room = None;
+                        self.message_input.clear();
+                        self.show_join_panel = false;
+                        self.joining_room = None;
+                        self.join_error = None;
+                        self.join_input.clear();
+                        self.xmpp_cmd_tx = None;
+                        self.xmpp_cmd_rx = None;
 
                         return focus_jid_input();
                     }
@@ -328,7 +332,6 @@ impl Snack
             {
                 self.state = AppState::Login;
                 self.connected_jid = None;
-                self.connected_password = None;
                 self.rooms.clear();
                 self.active_room = None;
                 self.message_input.clear();
@@ -367,11 +370,14 @@ impl Snack
                         if let Some(ref tx) = self.xmpp_cmd_tx
                         {
                             let room_jid = self.rooms[index].jid.clone();
-                            let _ = tx.try_send(xmpp::XmppCommand::SendRoomMessage
+                            if tx.try_send(xmpp::XmppCommand::SendRoomMessage
                             {
                                 room: room_jid,
                                 body: body.clone(),
-                            });
+                            }).is_err()
+                            {
+                                return focus_input();
+                            }
                         }
 
                         self.message_input.clear();
@@ -509,26 +515,19 @@ impl Snack
             return Message::Ignore;
         });
 
-        match (&self.state, &self.connected_jid, &self.connected_password)
+        match (&self.state, &self.xmpp_cmd_rx)
         {
-            (AppState::Connecting | AppState::Connected, Some(jid), Some(password)) =>
+            (AppState::Connecting | AppState::Connected, Some(cmd_rx)) =>
             {
-                if let Some(cmd_rx) = &self.xmpp_cmd_rx
-                {
-                    let xmpp_sub = iced::Subscription::run_with(
-                        (jid.clone(), password.clone(), cmd_rx.clone()),
-                        |data: &(String, String, xmpp::CommandChannel)|
-                        {
-                            xmpp::connect(data.0.clone(), data.1.clone(), data.2.clone())
-                        },
-                    ).map(Message::XmppEvent);
+                let xmpp_sub = iced::Subscription::run_with(
+                    cmd_rx.clone(),
+                    |cmd: &xmpp::CommandChannel|
+                    {
+                        xmpp::connect(cmd.clone())
+                    },
+                ).map(Message::XmppEvent);
 
-                    return iced::Subscription::batch([keyboard, xmpp_sub]);
-                }
-                else
-                {
-                    return keyboard;
-                }
+                return iced::Subscription::batch([keyboard, xmpp_sub]);
             }
             _ => return keyboard,
         }
