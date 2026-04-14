@@ -55,9 +55,9 @@ pub fn view(state: &Snack) -> Element<'_, Message>
         form = form.push(text(err.clone()).size(14));
     }
 
-    container(form)
-        .center(Fill)
-        .width(Fill)
-        .height(Fill)
-        .into()
+    return container(form)
+            .center(Fill)
+            .width(Fill)
+            .height(Fill)
+            .into();
 }

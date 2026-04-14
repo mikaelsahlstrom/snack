@@ -14,7 +14,7 @@ pub fn view(state: &Snack) -> Element<'_, Message>
             text(&u.name).size(14).into()
         }).collect();
 
-        container(
+        return container(
             column![
                 text(format!("Members ({})", member_count)).size(12),
                 scrollable(
@@ -26,13 +26,13 @@ pub fn view(state: &Snack) -> Element<'_, Message>
         .height(Fill)
         .padding(8)
         .style(container::bordered_box)
-        .into()
+        .into();
     }
     else
     {
-        container(text(""))
-            .width(Length::Fixed(160.0))
-            .height(Fill)
-            .into()
+        return container(text(""))
+                .width(Length::Fixed(160.0))
+                .height(Fill)
+                .into();
     }
 }

@@ -80,12 +80,12 @@ pub enum Message
     JoinRoom,
     DismissJoinError,
     LeaveRoom,
+    OpenUrl(String),
 }
 
 fn main() -> iced::Result
 {
     env_logger::init();
-    let _ = rustls::crypto::ring::default_provider().install_default();
     return application().run();
 }
 
@@ -101,7 +101,7 @@ impl Snack
 {
     fn new() -> (Self, Task<Message>)
     {
-        (Self
+        return (Self
         {
             state: AppState::Login,
             jid_input: String::new(),
@@ -118,7 +118,7 @@ impl Snack
             join_input: String::new(),
             xmpp_cmd_tx: None,
             xmpp_cmd_rx: None,
-        }, focus_jid_input())
+        }, focus_jid_input());
     }
 
     fn title(&self) -> String
@@ -165,6 +165,7 @@ impl Snack
                 {
                     error!("Connection failed: JID and password are required");
                     self.connect_error = Some("JID and password are required.".to_string());
+
                     return Task::none();
                 }
 
@@ -172,6 +173,7 @@ impl Snack
                 {
                     error!("Connection failed: invalid JID format '{}'", jid);
                     self.connect_error = Some("JID must be in the format user@domain.".to_string());
+
                     return Task::none();
                 }
 
@@ -189,46 +191,62 @@ impl Snack
             }
             Message::XmppEvent(event) =>
             {
+                log::debug!("UI received XmppEvent: {:?}", event);
                 match event
                 {
                     xmpp::XmppEvent::Connected =>
                     {
                         self.password_input.clear();
                         self.state = AppState::Connected;
+
                         return focus_join_input();
                     }
                     xmpp::XmppEvent::Disconnected(reason) =>
                     {
                         error!("Disconnected: {}", reason);
+
                         self.connect_error = Some(reason);
                         self.connected_password = None;
                         self.state = AppState::Login;
                         self.rooms.clear();
                         self.active_room = None;
+
                         return focus_jid_input();
                     }
-                    xmpp::XmppEvent::RoomJoined(jid) =>
+                    xmpp::XmppEvent::RoomJoined { room: jid, members } =>
                     {
                         self.joining_room = None;
                         self.join_error = None;
+
                         if let Some(pos) = self.rooms.iter().position(|r| r.jid == jid)
                         {
                             self.active_room = Some(pos);
+                            self.rooms[pos].users = members.into_iter().map(|m| room::user::User
+                            {
+                                jid: String::new(),
+                                name: m.nick,
+                            }).collect();
                         }
                         else
                         {
                             let title = jid.split('@').next().unwrap_or(&jid).to_string();
+                            let users = members.into_iter().map(|m| room::user::User
+                            {
+                                jid: String::new(),
+                                name: m.nick,
+                            }).collect();
                             self.rooms.push(room::Room
                             {
                                 jid,
                                 title,
                                 topic: String::new(),
-                                users: Vec::new(),
+                                users,
                                 messages: Vec::new(),
                                 unread: false,
                             });
                             self.active_room = Some(self.rooms.len() - 1);
                         }
+
                         self.show_join_panel = false;
                         return Task::batch([snap_to_bottom(), focus_input()]);
                     }
@@ -236,6 +254,7 @@ impl Snack
                     {
                         self.joining_room = None;
                         self.join_error = Some(reason);
+
                         return focus_join_input();
                     }
                     xmpp::XmppEvent::RoomLeft(jid) =>
@@ -256,6 +275,24 @@ impl Snack
                             }
                         }
                     }
+                    xmpp::XmppEvent::MemberJoined { room, member } =>
+                    {
+                        if let Some(r) = self.rooms.iter_mut().find(|r| r.jid == room)
+                        {
+                            r.users.push(room::user::User
+                            {
+                                jid: String::new(),
+                                name: member.nick,
+                            });
+                        }
+                    }
+                    xmpp::XmppEvent::MemberLeft { room, nick } =>
+                    {
+                        if let Some(r) = self.rooms.iter_mut().find(|r| r.jid == room)
+                        {
+                            r.users.retain(|u| u.name != nick);
+                        }
+                    }
                     xmpp::XmppEvent::RoomMessage { room, nick, body, timestamp } =>
                     {
                         let room_idx = self.rooms.iter().position(|r| r.jid == room);
@@ -267,11 +304,14 @@ impl Snack
                                 body,
                                 received: timestamp,
                             });
+
                             let is_active = self.active_room == Some(idx);
+
                             if !is_active
                             {
                                 self.rooms[idx].unread = true;
                             }
+
                             return snap_to_bottom();
                         }
                     }
@@ -372,6 +412,7 @@ impl Snack
                         self.show_join_panel = false;
                         self.join_input.clear();
                         self.join_error = None;
+
                         return Task::batch([snap_to_bottom(), focus_input()]);
                     }
 
@@ -414,8 +455,16 @@ impl Snack
                     // Room removal is driven by XmppEvent::RoomLeft.
                 }
             }
+            Message::OpenUrl(url) =>
+            {
+                if let Err(e) = open::that(&url)
+                {
+                    error!("Failed to open URL {}: {}", url, e);
+                }
+            }
         }
-        Task::none()
+
+        return Task::none();
     }
 
     fn view(&self) -> Element<'_, Message>
@@ -432,11 +481,11 @@ impl Snack
                 let center = ui::chat::view(self);
                 let member_list = ui::members::view(self);
 
-                row![room_list, center, member_list]
+                return row![room_list, center, member_list]
                     .spacing(0)
                     .height(Fill)
                     .width(Fill)
-                    .into()
+                    .into();
             }
         }
     }
@@ -456,7 +505,8 @@ impl Snack
                     return Message::TabPressed;
                 }
             }
-            Message::Ignore
+
+            return Message::Ignore;
         });
 
         match (&self.state, &self.connected_jid, &self.connected_password)
@@ -473,19 +523,19 @@ impl Snack
                         },
                     ).map(Message::XmppEvent);
 
-                    iced::Subscription::batch([keyboard, xmpp_sub])
+                    return iced::Subscription::batch([keyboard, xmpp_sub]);
                 }
                 else
                 {
-                    keyboard
+                    return keyboard;
                 }
             }
-            _ => keyboard,
+            _ => return keyboard,
         }
     }
 
     fn theme(&self) -> Theme
     {
-        Theme::Nord
+        return Theme::Nord;
     }
 }

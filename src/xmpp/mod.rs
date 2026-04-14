@@ -1,13 +1,7 @@
 use iced::futures::SinkExt;
 use iced::stream;
-use log::{ debug, error };
+use log::error;
 use std::sync::{ Arc, Mutex };
-use std::time::Duration;
-use xmpp::jid::BareJid;
-use xmpp::{ ClientBuilder, ClientFeature, ClientType, Event };
-use xmpp::parsers::message::MessageType;
-
-const JOIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub enum XmppCommand
@@ -51,9 +45,11 @@ pub enum XmppEvent
 {
     Connected,
     Disconnected(String),
-    RoomJoined(String),
+    RoomJoined { room: String, members: Vec<::xmpp::RoomMember> },
     RoomJoinFailed { room: String, reason: String },
     RoomLeft(String),
+    MemberJoined { room: String, member: ::xmpp::RoomMember },
+    MemberLeft { room: String, nick: String },
     RoomMessage
     {
         room: String,
@@ -72,17 +68,6 @@ pub fn connect(jid: String, password: String, cmd: CommandChannel) -> impl iced:
 {
     stream::channel(100, async move |mut output|
     {
-        let bare_jid = match BareJid::new(&jid)
-        {
-            Ok(j) => j,
-            Err(e) =>
-            {
-                error!("Invalid JID '{}': {}", jid, e);
-                let _ = output.send(XmppEvent::Disconnected(format!("Invalid JID: {}", e))).await;
-                return;
-            }
-        };
-
         let cmd_rx_opt = cmd.0.lock().unwrap().take();
         let mut cmd_rx = match cmd_rx_opt
         {
@@ -91,11 +76,16 @@ pub fn connect(jid: String, password: String, cmd: CommandChannel) -> impl iced:
             {
                 error!("Command channel receiver already consumed");
                 let _ = output.send(XmppEvent::Disconnected("Internal error: command channel already consumed.".to_string())).await;
+
                 return;
             }
         };
 
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<XmppEvent>(100);
+        let nick = jid.split('@').next().unwrap_or("user").to_string();
+
+        // Bridge between iced's async executor and tokio: libxmpp requires a
+        // tokio runtime for TCP, TLS, and spawned tasks.
+        let (bridge_tx, mut bridge_rx) = tokio::sync::mpsc::channel::<XmppEvent>(100);
 
         std::thread::spawn(move ||
         {
@@ -103,104 +93,68 @@ pub fn connect(jid: String, password: String, cmd: CommandChannel) -> impl iced:
 
             rt.block_on(async move
             {
-                let nick = bare_jid.node().map(|n| n.as_str()).unwrap_or("user").to_string();
-
-                let mut client = ClientBuilder::new(bare_jid, &password)
-                    .set_client(ClientType::Pc, concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION")))
-                    .set_default_nick(&nick)
-                    .enable_feature(ClientFeature::JoinRooms)
-                    .build();
-
-                // When a join is in progress, track the JID and the deadline.
-                let mut joining_jid: Option<String> = None;
-                let mut join_deadline = tokio::time::Instant::now();
+                let (mut client, mut event_rx) = match ::xmpp::XmppClient::new(&jid, &password).await
+                {
+                    Ok(x) => x,
+                    Err(e) =>
+                    {
+                        let _ = bridge_tx.send(XmppEvent::Disconnected(e)).await;
+                        return;
+                    }
+                };
 
                 loop
                 {
                     tokio::select!
                     {
-                        events = client.wait_for_events() =>
+                        event = event_rx.recv() =>
                         {
-                            match events
+                            match event
                             {
-                                Some(events) =>
+                                Some(ev) =>
                                 {
-                                    for event in events
+                                    let mapped = match ev
                                     {
-                                        debug!("XMPP event: {:?}", event);
-                                        let xmpp_event = match event
+                                        ::xmpp::XmppEvent::Connected => Some(XmppEvent::Connected),
+                                        ::xmpp::XmppEvent::RoomJoined { room, members } =>
                                         {
-                                            Event::Online => Some(XmppEvent::Connected),
-                                            Event::Disconnected(e) =>
-                                            {
-                                                debug!("XMPP disconnected: {}", e);
-                                                let _ = tx.send(XmppEvent::Disconnected(format!("{}", e))).await;
-                                                return;
-                                            }
-                                            Event::RoomJoined(jid) =>
-                                            {
-                                                if joining_jid.as_deref() == Some(jid.to_string().as_str())
-                                                {
-                                                    joining_jid = None;
-                                                }
-                                                Some(XmppEvent::RoomJoined(jid.to_string()))
-                                            }
-                                            Event::RoomLeft(jid) =>
-                                            {
-                                                let jid_str = jid.to_string();
-                                                if joining_jid.as_deref() == Some(&jid_str)
-                                                {
-                                                    // Server rejected the join (error presence).
-                                                    joining_jid = None;
-                                                    Some(XmppEvent::RoomJoinFailed
-                                                    {
-                                                        room: jid_str,
-                                                        reason: "Room not found or access denied.".to_string(),
-                                                    })
-                                                }
-                                                else
-                                                {
-                                                    Some(XmppEvent::RoomLeft(jid_str))
-                                                }
-                                            }
-                                            Event::RoomMessage(_id, room, nick, body, time_info) =>
-                                            {
-                                                let timestamp = time_info.delays.first()
-                                                    .map(|d| d.stamp.0.with_timezone(&chrono::Utc))
-                                                    .unwrap_or(time_info.received);
-                                                Some(XmppEvent::RoomMessage
-                                                {
-                                                    room: room.to_string(),
-                                                    nick,
-                                                    body: body.0,
-                                                    timestamp,
-                                                })
-                                            }
-                                            Event::RoomSubject(room, _nick, subject, _time_info) =>
-                                            {
-                                                Some(XmppEvent::RoomSubject
-                                                {
-                                                    room: room.to_string(),
-                                                    subject,
-                                                })
-                                            }
-                                            _ => None,
-                                        };
+                                            Some(XmppEvent::RoomJoined { room, members })
+                                        }
+                                        ::xmpp::XmppEvent::MemberJoined { room, member } =>
+                                        {
+                                            Some(XmppEvent::MemberJoined { room, member })
+                                        }
+                                        ::xmpp::XmppEvent::MemberLeft { room, nick } =>
+                                        {
+                                            Some(XmppEvent::MemberLeft { room, nick })
+                                        }
+                                        ::xmpp::XmppEvent::RoomMessage { room, nick, body, timestamp } =>
+                                        {
+                                            let ts = timestamp
+                                                .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                                                .map(|dt| dt.with_timezone(&chrono::Utc))
+                                                .unwrap_or_else(chrono::Utc::now);
+                                            Some(XmppEvent::RoomMessage { room, nick, body, timestamp: ts })
+                                        }
+                                        ::xmpp::XmppEvent::RoomSubject { room, subject } =>
+                                        {
+                                            Some(XmppEvent::RoomSubject { room, subject })
+                                        }
+                                        _ => None,
+                                    };
 
-                                        if let Some(evt) = xmpp_event
+                                    if let Some(evt) = mapped
+                                    {
+                                        if bridge_tx.send(evt).await.is_err()
                                         {
-                                            if tx.send(evt).await.is_err()
-                                            {
-                                                error!("XMPP event channel closed");
-                                                return;
-                                            }
+                                            break;
                                         }
                                     }
                                 }
                                 None =>
                                 {
-                                    let _ = tx.send(XmppEvent::Disconnected("Connection closed.".to_string())).await;
-                                    return;
+                                    let _ = bridge_tx.send(XmppEvent::Disconnected("Connection closed.".to_string())).await;
+                                    break;
                                 }
                             }
                         }
@@ -210,77 +164,41 @@ pub fn connect(jid: String, password: String, cmd: CommandChannel) -> impl iced:
                             {
                                 Some(XmppCommand::JoinRoom(room_jid)) =>
                                 {
-                                    match BareJid::new(&room_jid)
+                                    if let Err(e) = client.join_room(&room_jid, &nick).await
                                     {
-                                        Ok(bare_jid) =>
+                                        let _ = bridge_tx.send(XmppEvent::RoomJoinFailed
                                         {
-                                            joining_jid = Some(room_jid.clone());
-                                            join_deadline = tokio::time::Instant::now() + JOIN_TIMEOUT;
-                                            client.join_room(bare_jid, None, None, "", "").await;
-                                        }
-                                        Err(e) =>
-                                        {
-                                            error!("Invalid room JID '{}': {}", room_jid, e);
-                                            let _ = tx.send(XmppEvent::RoomJoinFailed
-                                            {
-                                                room: room_jid,
-                                                reason: format!("Invalid room address: {}", e),
-                                            }).await;
-                                        }
-                                    }
-                                }
-                                Some(XmppCommand::LeaveRoom { room, nick }) =>
-                                {
-                                    match BareJid::new(&room)
-                                    {
-                                        Ok(bare_jid) =>
-                                        {
-                                            client.leave_room(bare_jid, nick, "", "").await;
-                                        }
-                                        Err(e) =>
-                                        {
-                                            error!("Invalid room JID '{}': {}", room, e);
-                                        }
+                                            room: room_jid,
+                                            reason: e,
+                                        }).await;
                                     }
                                 }
                                 Some(XmppCommand::SendRoomMessage { room, body }) =>
                                 {
-                                    match BareJid::new(&room)
+                                    if let Err(e) = client.send_room_message(&room, &body).await
                                     {
-                                        Ok(bare_jid) =>
-                                        {
-                                            client.send_message(bare_jid.into(), MessageType::Groupchat, "", &body).await;
-                                        }
-                                        Err(e) =>
-                                        {
-                                            error!("Invalid room JID '{}': {}", room, e);
-                                        }
+                                        error!("Failed to send message: {}", e);
                                     }
                                 }
-                                None => return,
-                            }
-                        }
-                        _ = tokio::time::sleep_until(join_deadline), if joining_jid.is_some() =>
-                        {
-                            if let Some(jid) = joining_jid.take()
-                            {
-                                error!("Timed out joining room '{}'", jid);
-                                let _ = tx.send(XmppEvent::RoomJoinFailed
+                                Some(XmppCommand::LeaveRoom { .. }) =>
                                 {
-                                    room: jid,
-                                    reason: "Timed out: no response from server.".to_string(),
-                                }).await;
+                                    // Not yet supported by libxmpp
+                                }
+                                None => break,
                             }
                         }
                     }
                 }
+
+                client.close().await;
             });
         });
 
-        while let Some(event) = rx.recv().await
+        while let Some(event) = bridge_rx.recv().await
         {
             let is_disconnect = matches!(&event, XmppEvent::Disconnected(_));
             let _ = output.send(event).await;
+
             if is_disconnect
             {
                 return;

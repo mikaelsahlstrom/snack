@@ -68,9 +68,18 @@ pub fn view(state: &Snack) -> Element<'_, Message>
             let r = &state.rooms[i];
             let is_active = state.active_room == Some(i);
             let icon = if r.unread { "\u{2022}" } else { " " };
+            let title_text = if r.unread
+            {
+                text(&r.title).size(14).font(iced::Font { weight: iced::font::Weight::Bold, ..Default::default() })
+            }
+            else
+            {
+                text(&r.title).size(14)
+            };
+
             let label = row![
                 text(icon).size(14),
-                text(&r.title).size(14),
+                title_text,
             ].spacing(6).align_y(iced::Alignment::Center);
 
             let btn_style = if is_active { style::room_button_active } else { button::text };
@@ -89,12 +98,12 @@ pub fn view(state: &Snack) -> Element<'_, Message>
         column(items).spacing(2).width(Fill)
     );
 
-    container(
+    return container(
         column![account_row, sidebar_header, list].spacing(8).width(Fill)
     )
     .width(Length::Fixed(200.0))
     .height(Fill)
     .padding(8)
     .style(container::bordered_box)
-    .into()
+    .into();
 }

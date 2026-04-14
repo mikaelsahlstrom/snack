@@ -1,8 +1,37 @@
-use iced::{ Element, Fill };
-use iced::widget::{ button, column, container, row, scrollable, text, text_input, Id };
+use iced::{ Color, Element, Fill, Length };
+use iced::widget::{ button, column, container, rich_text, row, scrollable, span, text, text_input, Id };
 
 use crate::{ Message, Snack, MESSAGE_SCROLL_ID, MESSAGE_INPUT_ID };
-use crate::ui::join;
+use crate::ui::{ join, style };
+
+/// Split text into alternating (plain, url) fragments.
+fn parse_urls(body: &str) -> Vec<(&str, bool)>
+{
+    let mut parts = Vec::new();
+    let mut remaining = body;
+
+    while let Some(start) = remaining.find("https://").or_else(|| remaining.find("http://"))
+    {
+        if start > 0
+        {
+            parts.push((&remaining[..start], false));
+        }
+
+        let url_text = &remaining[start..];
+        let end = url_text.find(|c: char| c.is_whitespace() || c == '>' || c == ')' || c == ']')
+            .unwrap_or(url_text.len());
+
+        parts.push((&remaining[start..start + end], true));
+        remaining = &remaining[start + end..];
+    }
+
+    if !remaining.is_empty()
+    {
+        parts.push((remaining, false));
+    }
+
+    return parts;
+}
 
 pub fn view(state: &Snack) -> Element<'_, Message>
 {
@@ -35,6 +64,20 @@ pub fn view(state: &Snack) -> Element<'_, Message>
         // Message list.
         let today = chrono::Local::now().date_naive();
 
+        // Derive local nick for mention highlighting.
+        let my_nick: Option<String> = state.connected_jid
+            .as_deref()
+            .and_then(|j| j.split('@').next())
+            .map(|n| n.to_lowercase());
+
+        // Estimate nick column width from the longest nick visible.
+        let max_nick_len = room.messages.iter()
+            .map(|m| m.from.len())
+            .max()
+            .unwrap_or(4);
+        // ~8px per character at size 14 + 2 chars for ": "
+        let nick_width = ((max_nick_len + 2) as f32) * 8.0;
+
         let messages: Vec<Element<'_, Message>> = room.messages.iter().map(|m|
         {
             let local_time = m.received.with_timezone(&chrono::Local);
@@ -46,9 +89,51 @@ pub fn view(state: &Snack) -> Element<'_, Message>
             {
                 local_time.format("%Y-%m-%d %H:%M:%S").to_string()
             };
-            let line = text(format!("[{}] {}: {}", timestamp, m.from, m.body)).size(14);
 
-            container(line).padding(4).width(Fill).into()
+            // Dim timestamp, mid-tone nick, default body.
+            let time_color = Color::from_rgb(0.40, 0.44, 0.50);
+            let nick_color = Color::from_rgb(0.60, 0.64, 0.70);
+
+            let time_width = if local_time.date_naive() == today { 65.0 } else { 145.0 };
+            let time_label = text(timestamp).size(14).color(time_color)
+                .width(Length::Fixed(time_width));
+            let nick_label = text(format!("{}: ", m.from)).size(14).color(nick_color)
+                .width(Length::Fixed(nick_width));
+
+            let link_color = Color::from_rgb(0.53, 0.75, 0.82);
+            let body_spans: Vec<_> = parse_urls(&m.body).into_iter().map(|(s, is_url)|
+            {
+                if is_url
+                {
+                    span(s.to_string()).color(link_color).underline(true).link(s.to_string())
+                }
+                else
+                {
+                    span(s.to_string())
+                }
+            }).collect();
+
+            let body_label = rich_text(body_spans)
+                .on_link_click(Message::OpenUrl)
+                .size(14)
+                .width(Fill);
+
+            let msg_row = row![time_label, nick_label, body_label]
+                .spacing(4).width(Fill);
+
+            let is_mention = my_nick.as_ref()
+                .is_some_and(|nick| m.body.to_lowercase().contains(nick));
+
+            let msg_container = container(msg_row).padding(4).width(Fill);
+
+            if is_mention
+            {
+                msg_container.style(style::mention_highlight).into()
+            }
+            else
+            {
+                msg_container.into()
+            }
         }).collect();
 
         let message_area = scrollable(
@@ -72,15 +157,15 @@ pub fn view(state: &Snack) -> Element<'_, Message>
 
         let input_row = row![input, send_btn].spacing(8).width(Fill);
 
-        column![topic_label, message_area, input_row]
+        return column![topic_label, message_area, input_row]
             .spacing(8)
             .width(Fill)
             .height(Fill)
             .padding(8)
-            .into()
+            .into();
     }
     else
     {
-        join::view(state)
+        return join::view(state);
     }
 }
