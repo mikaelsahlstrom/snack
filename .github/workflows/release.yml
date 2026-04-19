@@ -19,9 +19,6 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact: snack-linux-x86_64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            artifact: snack-macos-aarch64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: snack-windows-x86_64.exe
