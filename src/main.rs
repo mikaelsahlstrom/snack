@@ -229,6 +229,8 @@ impl Snack
                             {
                                 jid: String::new(),
                                 name: m.nick,
+                                show: m.show,
+                                status: m.status,
                             }).collect();
                         }
                         else
@@ -238,6 +240,8 @@ impl Snack
                             {
                                 jid: String::new(),
                                 name: m.nick,
+                                show: m.show,
+                                status: m.status,
                             }).collect();
                             self.rooms.push(room::Room
                             {
@@ -283,11 +287,21 @@ impl Snack
                     {
                         if let Some(r) = self.rooms.iter_mut().find(|r| r.jid == room)
                         {
-                            r.users.push(room::user::User
+                            if let Some(existing) = r.users.iter_mut().find(|u| u.name == member.nick)
                             {
-                                jid: String::new(),
-                                name: member.nick,
-                            });
+                                existing.show = member.show;
+                                existing.status = member.status;
+                            }
+                            else
+                            {
+                                r.users.push(room::user::User
+                                {
+                                    jid: String::new(),
+                                    name: member.nick,
+                                    show: member.show,
+                                    status: member.status,
+                                });
+                            }
                         }
                     }
                     xmpp::XmppEvent::MemberLeft { room, nick } =>

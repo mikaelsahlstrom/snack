@@ -11,7 +11,14 @@ pub fn view(state: &Snack) -> Element<'_, Message>
         let member_count = room.users.len();
         let members: Vec<Element<'_, Message>> = room.users.iter().map(|u|
         {
-            text(&u.name).size(14).into()
+            let show_indicator = match u.show.as_deref()
+            {
+                Some("away") | Some("xa") => " (away)",
+                Some("dnd") => " (busy)",
+                Some("chat") => " (chat)",
+                _ => "",
+            };
+            text(format!("{}{}", u.name, show_indicator)).size(14).into()
         }).collect();
 
         return container(
