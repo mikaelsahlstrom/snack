@@ -15,10 +15,17 @@ pub fn view(state: &Snack) -> Element<'_, Message>
             {
                 Some("away") | Some("xa") => " (away)",
                 Some("dnd") => " (busy)",
-                Some("chat") => " (chat)",
                 _ => "",
             };
-            text(format!("{}{}", u.name, show_indicator)).size(14).into()
+
+            if show_indicator.is_empty()
+            {
+                text(&u.name).size(14).into()
+            }
+            else
+            {
+                text(format!("{}{}", u.name, show_indicator)).size(14).into()
+            }
         }).collect();
 
         return container(
