@@ -503,14 +503,7 @@ impl Snack
                     room.read_marker = Some(room.messages.len());
                 }
             }
-            Message::WindowFocused =>
-            {
-                // You can see the active room, so its divider is no longer useful.
-                if let Some(idx) = self.active_room
-                {
-                    self.rooms[idx].read_marker = None;
-                }
-            }
+            Message::WindowFocused => {}
         }
 
         return Task::none();

@@ -78,8 +78,30 @@ pub fn view(state: &Snack) -> Element<'_, Message>
         // ~8px per character at size 14 + 2 chars for ": "
         let nick_width = ((max_nick_len + 2) as f32) * 8.0;
 
-        let messages: Vec<Element<'_, Message>> = room.messages.iter().enumerate().flat_map(|(i, m)|
+        let mut messages: Vec<Element<'_, Message>> = Vec::with_capacity(room.messages.len() + 1);
+
+        for (i, m) in room.messages.iter().enumerate()
         {
+            // Insert a "new messages" divider before the first new message.
+            if room.read_marker == Some(i) && i < room.messages.len()
+            {
+                let accent = Color::from_rgb(0.60, 0.40, 0.40);
+                let new_label = text("  new messages  ").size(11).color(accent);
+                let line = || container(text(""))
+                    .height(1)
+                    .width(Fill)
+                    .style(|_: &_| container::Style
+                    {
+                        background: Some(iced::Background::Color(Color::from_rgb(0.60, 0.40, 0.40))),
+                        ..Default::default()
+                    });
+                let divider: Element<'_, Message> = row![line(), new_label, line()]
+                    .align_y(iced::Alignment::Center)
+                    .width(Fill)
+                    .into();
+                messages.push(divider);
+            }
+
             let local_time = m.received.with_timezone(&chrono::Local);
             let timestamp = if local_time.date_naive() == today
             {
@@ -145,38 +167,8 @@ pub fn view(state: &Snack) -> Element<'_, Message>
                 msg_container.into()
             };
 
-            // Insert a "new messages" divider before the first new message.
-            let show_divider = room.read_marker == Some(i)
-                && room.messages.len() > i;
-
-            if show_divider
-            {
-                let accent = Color::from_rgb(0.60, 0.40, 0.40);
-                let new_label = text("  new messages  ").size(11).color(accent);
-                let line = || container(text(""))
-                    .height(1)
-                    .width(Fill)
-                    .style(|_: &_| container::Style
-                    {
-                        background: Some(iced::Background::Color(Color::from_rgb(0.60, 0.40, 0.40))),
-                        ..Default::default()
-                    });
-                let divider: Element<'_, Message> = row![
-                    line(),
-                    new_label,
-                    line(),
-                ]
-                .align_y(iced::Alignment::Center)
-                .width(Fill)
-                .into();
-
-                vec![divider, msg_element]
-            }
-            else
-            {
-                vec![msg_element]
-            }
-        }).collect();
+            messages.push(msg_element);
+        }
 
         let message_area = scrollable(
             column(messages).spacing(2).width(Fill)
