@@ -80,6 +80,8 @@ pub enum Message
     DismissJoinError,
     LeaveRoom,
     OpenUrl(String),
+    WindowFocused,
+    WindowUnfocused,
 }
 
 fn main() -> iced::Result
@@ -251,6 +253,7 @@ impl Snack
                                 users,
                                 messages: Vec::new(),
                                 unread: false,
+                                read_marker: None,
                             });
                             self.active_room = Some(self.rooms.len() - 1);
                         }
@@ -360,11 +363,22 @@ impl Snack
             }
             Message::SelectRoom(index) =>
             {
+                // Stamp the room we're leaving so messages arriving while away show as new.
+                if let Some(old_idx) = self.active_room
+                {
+                    if old_idx != index
+                    {
+                        let len = self.rooms[old_idx].messages.len();
+                        self.rooms[old_idx].read_marker = Some(len);
+                    }
+                }
+
                 self.active_room = Some(index);
                 self.show_join_panel = false;
                 if let Some(r) = self.rooms.get_mut(index)
                 {
                     r.unread = false;
+                    r.read_marker = None;
                 }
 
                 return Task::batch([snap_to_bottom(), focus_input()]);
@@ -482,6 +496,14 @@ impl Snack
                     error!("Failed to open URL {}: {}", url, e);
                 }
             }
+            Message::WindowUnfocused =>
+            {
+                for room in self.rooms.iter_mut()
+                {
+                    room.read_marker = Some(room.messages.len());
+                }
+            }
+            Message::WindowFocused => {}
         }
 
         return Task::none();
@@ -529,6 +551,16 @@ impl Snack
             return Message::Ignore;
         });
 
+        let window_focus = iced::event::listen_with(|event, _status, _id|
+        {
+            match event
+            {
+                iced::Event::Window(iced::window::Event::Focused) => Some(Message::WindowFocused),
+                iced::Event::Window(iced::window::Event::Unfocused) => Some(Message::WindowUnfocused),
+                _ => None,
+            }
+        });
+
         match (&self.state, &self.xmpp_cmd_rx)
         {
             (AppState::Connecting | AppState::Connected, Some(cmd_rx)) =>
@@ -541,9 +573,9 @@ impl Snack
                     },
                 ).map(Message::XmppEvent);
 
-                return iced::Subscription::batch([keyboard, xmpp_sub]);
+                return iced::Subscription::batch([keyboard, window_focus, xmpp_sub]);
             }
-            _ => return keyboard,
+            _ => return iced::Subscription::batch([keyboard, window_focus]),
         }
     }
 
