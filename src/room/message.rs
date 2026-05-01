@@ -1,8 +1,24 @@
 use chrono::{ DateTime, Utc };
 
-pub struct Message
+pub enum EventKind
 {
-    pub from: String,
-    pub body: String,
-    pub received: DateTime<Utc>
+    Joined,
+    Left,
+    StatusChanged(Option<String>),
+}
+
+pub enum Message
+{
+    Chat
+    {
+        from: String,
+        body: String,
+        received: DateTime<Utc>,
+    },
+    Event
+    {
+        kind: EventKind,
+        nick: String,
+        received: DateTime<Utc>,
+    },
 }
