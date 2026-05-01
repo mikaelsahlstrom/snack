@@ -290,19 +290,39 @@ impl Snack
                     {
                         if let Some(r) = self.rooms.iter_mut().find(|r| r.jid == room)
                         {
-                            if let Some(existing) = r.users.iter_mut().find(|u| u.name == member.nick)
+                            let nick = member.nick.clone();
+                            let existing_idx = r.users.iter().position(|u| u.name == nick);
+
+                            if let Some(idx) = existing_idx
                             {
-                                existing.show = member.show;
-                                existing.status = member.status;
+                                let old_show = r.users[idx].show.clone();
+                                r.users[idx].show = member.show.clone();
+                                r.users[idx].status = member.status;
+
+                                if old_show != r.users[idx].show
+                                {
+                                    r.messages.push(room::message::Message::Event
+                                    {
+                                        kind: room::message::EventKind::StatusChanged(r.users[idx].show.clone()),
+                                        nick,
+                                        received: chrono::Utc::now(),
+                                    });
+                                }
                             }
                             else
                             {
                                 r.users.push(room::user::User
                                 {
                                     jid: String::new(),
-                                    name: member.nick,
+                                    name: nick.clone(),
                                     show: member.show,
                                     status: member.status,
+                                });
+                                r.messages.push(room::message::Message::Event
+                                {
+                                    kind: room::message::EventKind::Joined,
+                                    nick,
+                                    received: chrono::Utc::now(),
                                 });
                             }
                         }
@@ -312,6 +332,12 @@ impl Snack
                         if let Some(r) = self.rooms.iter_mut().find(|r| r.jid == room)
                         {
                             r.users.retain(|u| u.name != nick);
+                            r.messages.push(room::message::Message::Event
+                            {
+                                kind: room::message::EventKind::Left,
+                                nick,
+                                received: chrono::Utc::now(),
+                            });
                         }
                     }
                     xmpp::XmppEvent::RoomMessage { room, nick, body, timestamp } =>
@@ -319,7 +345,7 @@ impl Snack
                         let room_idx = self.rooms.iter().position(|r| r.jid == room);
                         if let Some(idx) = room_idx
                         {
-                            self.rooms[idx].messages.push(room::message::Message
+                            self.rooms[idx].messages.push(room::message::Message::Chat
                             {
                                 from: nick,
                                 body,
