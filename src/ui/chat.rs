@@ -18,8 +18,7 @@ fn parse_urls(body: &str) -> Vec<(&str, bool)>
         }
 
         let url_text = &remaining[start..];
-        let end = url_text.find(|c: char| c.is_whitespace() || c == '>' || c == ')' || c == ']')
-            .unwrap_or(url_text.len());
+        let end = url_text.find(|c: char| c.is_whitespace()).unwrap_or(url_text.len());
 
         parts.push((&remaining[start..start + end], true));
         remaining = &remaining[start + end..];
