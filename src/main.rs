@@ -229,7 +229,7 @@ impl Snack
                             self.active_room = Some(pos);
                             self.rooms[pos].users = members.into_iter().map(|m| room::user::User
                             {
-                                jid: String::new(),
+                                jid: m.jid,
                                 name: m.nick,
                                 show: m.show,
                                 status: m.status,
@@ -240,7 +240,7 @@ impl Snack
                             let title = jid.split('@').next().unwrap_or(&jid).to_string();
                             let users = members.into_iter().map(|m| room::user::User
                             {
-                                jid: String::new(),
+                                jid: m.jid,
                                 name: m.nick,
                                 show: m.show,
                                 status: m.status,
@@ -290,6 +290,7 @@ impl Snack
                     {
                         if let Some(r) = self.rooms.iter_mut().find(|r| r.jid == room)
                         {
+                            let jid = member.jid.clone();
                             let nick = member.nick.clone();
                             let existing_idx = r.users.iter().position(|u| u.name == nick);
 
@@ -313,7 +314,7 @@ impl Snack
                             {
                                 r.users.push(room::user::User
                                 {
-                                    jid: String::new(),
+                                    jid: jid.clone(),
                                     name: nick.clone(),
                                     show: member.show,
                                     status: member.status,
