@@ -1,5 +1,5 @@
 use iced::{ Element, Fill, Length };
-use iced::widget::{ column, container, scrollable, text };
+use iced::widget::{ column, container, scrollable, text, tooltip };
 
 use crate::{ Message, Snack };
 
@@ -18,13 +18,26 @@ pub fn view(state: &Snack) -> Element<'_, Message>
                 _ => "",
             };
 
-            if show_indicator.is_empty()
+            let label = if show_indicator.is_empty()
             {
-                text(&u.name).size(14).into()
+                u.name.clone()
             }
             else
             {
-                text(format!("{}{}", u.name, show_indicator)).size(14).into()
+                format!("{}{}", u.name, show_indicator)
+            };
+
+            if let Some(ref jid) = u.jid
+            {
+                tooltip(
+                    text(label.clone()).size(14),
+                    container(text(jid).size(12)).padding(4).style(container::bordered_box),
+                    tooltip::Position::Right,
+                ).into()
+            }
+            else
+            {
+                text(label).size(14).into()
             }
         }).collect();
 
