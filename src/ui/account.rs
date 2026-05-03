@@ -1,5 +1,5 @@
 use iced::{ Element, Fill, Length };
-use iced::widget::{ button, column, container, text, text_input, Id };
+use iced::widget::{ button, checkbox, column, container, text, text_input, Id };
 
 use crate::{ AppState, Message, Snack, ACCOUNT_JID_INPUT_ID, ACCOUNT_PASSWORD_INPUT_ID };
 
@@ -37,17 +37,32 @@ pub fn view(state: &Snack) -> Element<'_, Message>
         text("Connect to account").size(18)
     };
 
-    let mut connect_btn = button(text("Connect").size(14)).padding(10);
+    let mut remember_checkbox = checkbox(state.remember_me).label("Auto-login");
+
     if !connecting
     {
-        connect_btn = connect_btn.on_press(Message::Connect);
+        remember_checkbox = remember_checkbox.on_toggle(Message::RememberMeToggled);
     }
+
+    let action_btn = if connecting
+    {
+        button(text("Cancel").size(14))
+            .on_press(Message::CancelConnect)
+            .padding(10)
+    }
+    else
+    {
+        button(text("Connect").size(14))
+            .on_press(Message::Connect)
+            .padding(10)
+    };
 
     let mut form = column![
         heading,
         jid_input,
         password_input,
-        connect_btn,
+        remember_checkbox,
+        action_btn,
     ].spacing(12).align_x(iced::Alignment::Center);
 
     if let Some(ref err) = state.connect_error
