@@ -517,9 +517,10 @@ impl Snack
                         let room_idx = self.rooms.iter().position(|r| r.jid == room);
                         if let Some(idx) = room_idx
                         {
+                            let msg_index = self.rooms[idx].messages.len();
                             self.rooms[idx].messages.push(room::message::Message::Chat
                             {
-                                from: nick,
+                                from: nick.clone(),
                                 body,
                                 received: timestamp,
                             });
@@ -529,6 +530,15 @@ impl Snack
                             if !is_active
                             {
                                 self.rooms[idx].unread = true;
+                            }
+
+                            let own_nick = self.connected_jid
+                                .as_deref()
+                                .and_then(|j| j.split('@').next())
+                                .unwrap_or("");
+                            if nick == own_nick && self.rooms[idx].read_marker == Some(msg_index)
+                            {
+                                self.rooms[idx].read_marker = Some(msg_index + 1);
                             }
 
                             return snap_to_bottom();
