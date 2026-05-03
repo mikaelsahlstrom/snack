@@ -1,11 +1,11 @@
 use iced::{ Element, Fill, Length };
-use iced::widget::{ column, container, scrollable, text, tooltip };
+use iced::widget::{ button, column, container, scrollable, text, tooltip };
 
-use crate::{ Message, Snack };
+use crate::{ Message, Selection, Snack };
 
 pub fn view(state: &Snack) -> Element<'_, Message>
 {
-    if let Some(index) = state.active_room
+    if let Some(Selection::Room(index)) = state.active
     {
         let room = &state.rooms[index];
         let member_count = room.users.len();
@@ -27,18 +27,26 @@ pub fn view(state: &Snack) -> Element<'_, Message>
                 format!("{}{}", u.name, show_indicator)
             };
 
-            if let Some(ref jid) = u.jid
+            let (tooltip_text, on_press) = match u.jid.as_deref()
             {
-                tooltip(
-                    text(label.clone()).size(14),
-                    container(text(jid).size(12)).padding(4).style(container::bordered_box),
-                    tooltip::Position::Right,
-                ).into()
-            }
-            else
+                Some(jid) => (jid.to_string(), Some(Message::StartChat(jid.to_string()))),
+                None => ("JID not available in this room".to_string(), None),
+            };
+
+            let mut name_btn = button(text(label).size(14))
+                .padding(0)
+                .style(button::text);
+
+            if let Some(msg) = on_press
             {
-                text(label).size(14).into()
+                name_btn = name_btn.on_press(msg);
             }
+
+            tooltip(
+                name_btn,
+                container(text(tooltip_text).size(12)).padding(4).style(container::bordered_box),
+                tooltip::Position::Right,
+            ).into()
         }).collect();
 
         return container(

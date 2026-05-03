@@ -43,6 +43,13 @@ pub enum AppState
     Connected,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Selection
+{
+    Room(usize),
+    Chat(usize),
+}
+
 pub struct Snack
 {
     pub(crate) state: AppState,
@@ -51,7 +58,8 @@ pub struct Snack
     pub(crate) connected_jid: Option<String>,
     pub(crate) connect_error: Option<String>,
     pub(crate) rooms: Vec<room::Room>,
-    pub(crate) active_room: Option<usize>,
+    pub(crate) chats: Vec<room::chat::Chat>,
+    pub(crate) active: Option<Selection>,
     pub(crate) message_input: String,
     pub(crate) show_join_panel: bool,
     pub(crate) joining_room: Option<String>,
@@ -82,6 +90,8 @@ pub enum Message
     XmppEvent(xmpp::XmppEvent),
     Disconnect,
     SelectRoom(usize),
+    SelectChat(usize),
+    StartChat(String),
     InputChanged(String),
     SendMessage,
     ShowJoinPanel,
@@ -125,7 +135,8 @@ impl Snack
             connected_jid: None,
             connect_error: None,
             rooms: Vec::new(),
-            active_room: None,
+            chats: Vec::new(),
+            active: None,
             message_input: String::new(),
             show_join_panel: false,
             joining_room: None,
@@ -163,6 +174,31 @@ impl Snack
         }
 
         return "Snack".to_string();
+    }
+
+    // When switching away from the currently active room/chat to `next`, stamp
+    // the read marker on the one we're leaving so messages arriving while away
+    // are flagged as new. No-op when staying on the same selection.
+    fn stamp_active_read_marker(&mut self, next: Option<Selection>)
+    {
+        match self.active
+        {
+            Some(Selection::Room(old_idx)) if next != Some(Selection::Room(old_idx)) =>
+            {
+                if let Some(r) = self.rooms.get_mut(old_idx)
+                {
+                    r.read_marker = Some(r.messages.len());
+                }
+            }
+            Some(Selection::Chat(old_idx)) if next != Some(Selection::Chat(old_idx)) =>
+            {
+                if let Some(c) = self.chats.get_mut(old_idx)
+                {
+                    c.read_marker = Some(c.messages.len());
+                }
+            }
+            _ => {}
+        }
     }
 
     fn update(&mut self, message: Message) -> Task<Message>
@@ -339,7 +375,8 @@ impl Snack
                         self.connected_jid = None;
                         self.state = AppState::Login;
                         self.rooms.clear();
-                        self.active_room = None;
+                        self.chats.clear();
+                        self.active = None;
                         self.message_input.clear();
                         self.show_join_panel = false;
                         self.joining_room = None;
@@ -370,7 +407,7 @@ impl Snack
 
                         if let Some(pos) = self.rooms.iter().position(|r| r.jid == jid)
                         {
-                            self.active_room = Some(pos);
+                            self.active = Some(Selection::Room(pos));
                             self.rooms[pos].users = members.into_iter().map(|m| room::user::User
                             {
                                 jid: m.jid,
@@ -399,7 +436,8 @@ impl Snack
                                 unread: false,
                                 read_marker: None,
                             });
-                            self.active_room = Some(self.rooms.len() - 1);
+
+                            self.active = Some(Selection::Room(self.rooms.len() - 1));
                         }
 
                         self.show_join_panel = false;
@@ -444,15 +482,15 @@ impl Snack
                         if let Some(pos) = self.rooms.iter().position(|r| r.jid == jid)
                         {
                             self.rooms.remove(pos);
-                            if self.active_room == Some(pos)
+                            if let Some(Selection::Room(active)) = self.active
                             {
-                                self.active_room = None;
-                            }
-                            else if let Some(active) = self.active_room
-                            {
-                                if active > pos
+                                if active == pos
                                 {
-                                    self.active_room = Some(active - 1);
+                                    self.active = None;
+                                }
+                                else if active > pos
+                                {
+                                    self.active = Some(Selection::Room(active - 1));
                                 }
                             }
                         }
@@ -525,7 +563,7 @@ impl Snack
                                 received: timestamp,
                             });
 
-                            let is_active = self.active_room == Some(idx);
+                            let is_active = self.active == Some(Selection::Room(idx));
 
                             if !is_active
                             {
@@ -551,6 +589,42 @@ impl Snack
                             r.topic = subject;
                         }
                     }
+                    xmpp::XmppEvent::DirectMessage { from, body, timestamp } =>
+                    {
+                        let bare = from.split('/').next().unwrap_or(&from).to_string();
+                        let idx = match self.chats.iter().position(|c| c.jid == bare)
+                        {
+                            Some(i) => i,
+                            None =>
+                            {
+                                let title = bare.split('@').next().unwrap_or(&bare).to_string();
+                                self.chats.push(room::chat::Chat
+                                {
+                                    jid: bare,
+                                    title,
+                                    messages: Vec::new(),
+                                    unread: false,
+                                    read_marker: None,
+                                });
+                                self.chats.len() - 1
+                            }
+                        };
+
+                        let nick = self.chats[idx].title.clone();
+                        self.chats[idx].messages.push(room::message::Message::Chat
+                        {
+                            from: nick,
+                            body,
+                            received: timestamp,
+                        });
+
+                        if self.active != Some(Selection::Chat(idx))
+                        {
+                            self.chats[idx].unread = true;
+                        }
+
+                        return snap_to_bottom();
+                    }
                 }
             }
             Message::Disconnect =>
@@ -558,7 +632,8 @@ impl Snack
                 self.state = AppState::Login;
                 self.connected_jid = None;
                 self.rooms.clear();
-                self.active_room = None;
+                self.chats.clear();
+                self.active = None;
                 self.message_input.clear();
                 self.show_join_panel = false;
                 self.joining_room = None;
@@ -585,17 +660,9 @@ impl Snack
             }
             Message::SelectRoom(index) =>
             {
-                // Stamp the room we're leaving so messages arriving while away show as new.
-                if let Some(old_idx) = self.active_room
-                {
-                    if old_idx != index
-                    {
-                        let len = self.rooms[old_idx].messages.len();
-                        self.rooms[old_idx].read_marker = Some(len);
-                    }
-                }
+                self.stamp_active_read_marker(Some(Selection::Room(index)));
 
-                self.active_room = Some(index);
+                self.active = Some(Selection::Room(index));
                 self.show_join_panel = false;
                 if let Some(r) = self.rooms.get_mut(index)
                 {
@@ -605,17 +672,59 @@ impl Snack
 
                 return Task::batch([snap_to_bottom(), focus_input()]);
             }
+            Message::SelectChat(index) =>
+            {
+                self.stamp_active_read_marker(Some(Selection::Chat(index)));
+
+                self.active = Some(Selection::Chat(index));
+                self.show_join_panel = false;
+                if let Some(c) = self.chats.get_mut(index)
+                {
+                    c.unread = false;
+                    c.read_marker = None;
+                }
+
+                return Task::batch([snap_to_bottom(), focus_input()]);
+            }
+            Message::StartChat(jid) =>
+            {
+                let bare = jid.split('/').next().unwrap_or(&jid).to_string();
+                let idx = match self.chats.iter().position(|c| c.jid == bare)
+                {
+                    Some(i) => i,
+                    None =>
+                    {
+                        let title = bare.split('@').next().unwrap_or(&bare).to_string();
+                        self.chats.push(room::chat::Chat
+                        {
+                            jid: bare,
+                            title,
+                            messages: Vec::new(),
+                            unread: false,
+                            read_marker: None,
+                        });
+                        self.chats.len() - 1
+                    }
+                };
+
+                return Task::done(Message::SelectChat(idx));
+            }
             Message::InputChanged(value) =>
             {
                 self.message_input = value;
             }
             Message::SendMessage =>
             {
-                if let Some(index) = self.active_room
-                {
-                    let body = self.message_input.trim().to_string();
+                let body = self.message_input.trim().to_string();
 
-                    if !body.is_empty()
+                if body.is_empty()
+                {
+                    return Task::none();
+                }
+
+                match self.active
+                {
+                    Some(Selection::Room(index)) =>
                     {
                         if let Some(ref tx) = self.xmpp_cmd_tx
                         {
@@ -634,6 +743,48 @@ impl Snack
 
                         return Task::batch([snap_to_bottom(), focus_input()]);
                     }
+                    Some(Selection::Chat(index)) =>
+                    {
+                        let chat_jid = self.chats[index].jid.clone();
+
+                        if let Some(ref tx) = self.xmpp_cmd_tx
+                        {
+                            if tx.try_send(xmpp::XmppCommand::SendDirectMessage
+                            {
+                                to: chat_jid,
+                                body: body.clone(),
+                            }).is_err()
+                            {
+                                return focus_input();
+                            }
+                        }
+
+                        // The server does not echo type='chat' messages back to us, so append locally.
+                        let own_nick = self.connected_jid
+                            .as_deref()
+                            .and_then(|j| j.split('@').next())
+                            .unwrap_or("me")
+                            .to_string();
+
+                        let msg_index = self.chats[index].messages.len();
+
+                        self.chats[index].messages.push(room::message::Message::Chat
+                        {
+                            from: own_nick,
+                            body,
+                            received: chrono::Utc::now(),
+                        });
+
+                        if self.chats[index].read_marker == Some(msg_index)
+                        {
+                            self.chats[index].read_marker = Some(msg_index + 1);
+                        }
+
+                        self.message_input.clear();
+
+                        return Task::batch([snap_to_bottom(), focus_input()]);
+                    }
+                    None => {}
                 }
             }
             Message::ShowJoinPanel =>
@@ -665,7 +816,7 @@ impl Snack
                     // If already in this room, just switch to it.
                     if let Some(pos) = self.rooms.iter().position(|r| r.jid == jid)
                     {
-                        self.active_room = Some(pos);
+                        self.active = Some(Selection::Room(pos));
                         self.show_join_panel = false;
                         self.join_input.clear();
                         self.join_error = None;
@@ -689,7 +840,7 @@ impl Snack
             }
             Message::LeaveRoom =>
             {
-                if let Some(index) = self.active_room
+                if let Some(Selection::Room(index)) = self.active
                 {
                     let room_jid = self.rooms[index].jid.clone();
 
@@ -736,6 +887,11 @@ impl Snack
                 for room in self.rooms.iter_mut()
                 {
                     room.read_marker = Some(room.messages.len());
+                }
+
+                for chat in self.chats.iter_mut()
+                {
+                    chat.read_marker = Some(chat.messages.len());
                 }
             }
             Message::WindowFocused => {}

@@ -9,6 +9,7 @@ pub enum XmppCommand
     JoinRoom(String),
     LeaveRoom { room: String, nick: String },
     SendRoomMessage { room: String, body: String },
+    SendDirectMessage { to: String, body: String },
 }
 
 struct ChannelInner
@@ -76,6 +77,12 @@ pub enum XmppEvent
         from: String,
         condition: String,
         text: Option<String>,
+    },
+    DirectMessage
+    {
+        from: String,
+        body: String,
+        timestamp: chrono::DateTime<chrono::Utc>,
     },
 }
 
@@ -171,6 +178,14 @@ pub fn connect(cmd: CommandChannel) -> impl iced::futures::Stream<Item = XmppEve
                                         {
                                             Some(XmppEvent::PresenceError { from, condition, text })
                                         }
+                                        ::xmpp::XmppEvent::DirectMessage { from, body, timestamp } =>
+                                        {
+                                            let ts = timestamp
+                                                .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                                                .map(|dt| dt.with_timezone(&chrono::Utc))
+                                                .unwrap_or_else(chrono::Utc::now);
+                                            Some(XmppEvent::DirectMessage { from, body, timestamp: ts })
+                                        }
                                         _ => None,
                                     };
 
@@ -216,6 +231,13 @@ pub fn connect(cmd: CommandChannel) -> impl iced::futures::Stream<Item = XmppEve
                                     if let Err(e) = client.leave_room(&room, &nick).await
                                     {
                                         error!("Failed to leave room: {}", e);
+                                    }
+                                }
+                                Some(XmppCommand::SendDirectMessage { to, body }) =>
+                                {
+                                    if let Err(e) = client.send_message(&to, &body).await
+                                    {
+                                        error!("Failed to send direct message: {}", e);
                                     }
                                 }
                                 None => break,
