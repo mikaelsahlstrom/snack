@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 use iced::{ Application, Element, Program, Task, Theme, Fill };
 use iced::widget::{ row, Id };
 use log::error;
