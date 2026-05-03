@@ -1,5 +1,5 @@
 use iced::{ Element, Fill, Length };
-use iced::widget::{ button, column, container, row, text, text_input, Id };
+use iced::widget::{ button, checkbox, column, container, row, text, text_input, Id };
 
 use crate::{ Message, Snack, JOIN_INPUT_ID };
 
@@ -28,6 +28,13 @@ pub fn view(state: &Snack) -> Element<'_, Message>
             .on_submit(Message::JoinRoom);
     }
 
+    let mut save_checkbox = checkbox(state.save_room).label("Save this room");
+
+    if !joining
+    {
+        save_checkbox = save_checkbox.on_toggle(Message::SaveRoomToggled);
+    }
+
     let mut join_btn = button(text("Join").size(14)).padding(10);
     if !joining
     {
@@ -48,6 +55,7 @@ pub fn view(state: &Snack) -> Element<'_, Message>
     let mut form = column![
         heading,
         join_input,
+        save_checkbox,
         buttons,
     ].spacing(12).align_x(iced::Alignment::Center);
 

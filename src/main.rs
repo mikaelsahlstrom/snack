@@ -5,6 +5,7 @@ use iced::widget::{ row, Id };
 use log::error;
 
 mod room;
+mod storage;
 mod ui;
 mod xmpp;
 
@@ -58,6 +59,11 @@ pub struct Snack
     pub(crate) join_input: String,
     pub(crate) xmpp_cmd_tx: Option<tokio::sync::mpsc::Sender<xmpp::XmppCommand>>,
     pub(crate) xmpp_cmd_rx: Option<xmpp::CommandChannel>,
+    pub(crate) remember_me: bool,
+    pub(crate) save_room: bool,
+    pub(crate) saved_config: storage::SavedConfig,
+    pub(crate) pending_save_password: Option<String>,
+    pub(crate) auto_login_attempt: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -68,8 +74,11 @@ pub enum Message
     ShiftTabPressed,
     JidInputChanged(String),
     PasswordInputChanged(String),
+    RememberMeToggled(bool),
+    SaveRoomToggled(bool),
     FocusPassword,
     Connect,
+    CancelConnect,
     XmppEvent(xmpp::XmppEvent),
     Disconnect,
     SelectRoom(usize),
@@ -82,6 +91,7 @@ pub enum Message
     DismissJoinError,
     LeaveRoom,
     OpenUrl(String),
+    ForgetAutoLogin,
     WindowFocused,
     WindowUnfocused,
 }
@@ -104,10 +114,13 @@ impl Snack
 {
     fn new() -> (Self, Task<Message>)
     {
-        return (Self
+        storage::init_keyring();
+        let saved_config = storage::load();
+
+        let mut snack = Self
         {
             state: AppState::Login,
-            jid_input: String::new(),
+            jid_input: saved_config.jid.clone().unwrap_or_default(),
             password_input: String::new(),
             connected_jid: None,
             connect_error: None,
@@ -120,7 +133,26 @@ impl Snack
             join_input: String::new(),
             xmpp_cmd_tx: None,
             xmpp_cmd_rx: None,
-        }, focus_jid_input());
+            remember_me: false,
+            save_room: false,
+            saved_config,
+            pending_save_password: None,
+            auto_login_attempt: false,
+        };
+
+        // Auto-login: if a keyring entry exists for the saved JID, connect silently.
+        if let Some(jid) = snack.saved_config.jid.clone()
+        {
+            if let Some(password) = storage::load_password(&jid)
+            {
+                snack.password_input = password;
+                snack.remember_me = true;
+                snack.auto_login_attempt = true;
+                return (snack, Task::done(Message::Connect));
+            }
+        }
+
+        return (snack, focus_jid_input());
     }
 
     fn title(&self) -> String
@@ -154,6 +186,28 @@ impl Snack
             {
                 self.password_input = value;
             }
+            Message::RememberMeToggled(value) =>
+            {
+                self.remember_me = value;
+
+                // Unchecking "Remember me" on the login form immediately clears
+                // any saved credentials so the user isn't locked into auto-login.
+                if !value
+                {
+                    if let Some(jid) = self.saved_config.jid.take()
+                    {
+                        let _ = storage::delete_password(&jid);
+                    }
+                    if let Err(e) = storage::save(&self.saved_config)
+                    {
+                        log::warn!("Failed to save config after forgetting login: {}", e);
+                    }
+                }
+            }
+            Message::SaveRoomToggled(value) =>
+            {
+                self.save_room = value;
+            }
             Message::FocusPassword =>
             {
                 return iced::widget::operation::focus(Id::new(ACCOUNT_PASSWORD_INPUT_ID));
@@ -181,6 +235,7 @@ impl Snack
 
                 self.connected_jid = Some(jid.clone());
                 self.connect_error = None;
+                self.pending_save_password = Some(password.clone());
 
                 let (cmd_tx, cmd_rx) = xmpp::new_command_channel(jid, password);
                 self.xmpp_cmd_tx = Some(cmd_tx);
@@ -190,6 +245,18 @@ impl Snack
 
                 return Task::none();
             }
+            Message::CancelConnect =>
+            {
+                self.state = AppState::Login;
+                self.connected_jid = None;
+                self.xmpp_cmd_tx = None;
+                self.xmpp_cmd_rx = None;
+                self.pending_save_password = None;
+                self.auto_login_attempt = false;
+                self.connect_error = None;
+
+                return focus_jid_input();
+            }
             Message::XmppEvent(event) =>
             {
                 log::debug!("UI received XmppEvent: {:?}", event);
@@ -197,14 +264,76 @@ impl Snack
                 {
                     xmpp::XmppEvent::Connected =>
                     {
+                        let password = self.pending_save_password.take();
+                        let was_auto_login = self.auto_login_attempt;
                         self.password_input.clear();
                         self.state = AppState::Connected;
+                        self.auto_login_attempt = false;
+
+                        let jid = self.connected_jid.clone().unwrap_or_default();
+
+                        // Persist or clear saved login depending on the checkbox.
+                        if self.remember_me
+                        {
+                            // Skip the write when the password came from the Keychain
+                            // already as it hasn't changed.
+                            if !was_auto_login
+                            {
+                                if let Some(pw) = password
+                                {
+                                    if !jid.is_empty()
+                                    {
+                                        if let Err(e) = storage::save_password(&jid, &pw)
+                                        {
+                                            log::warn!("Failed to save password to keyring: {}", e);
+                                        }
+                                    }
+                                }
+                            }
+                            self.saved_config.jid = Some(jid.clone());
+                        }
+                        else
+                        {
+                            // User unchecked Remember me. Clear any prior saved login.
+                            if let Some(prev) = self.saved_config.jid.clone()
+                            {
+                                let _ = storage::delete_password(&prev);
+                            }
+
+                            self.saved_config.jid = None;
+                        }
+
+                        if let Err(e) = storage::save(&self.saved_config)
+                        {
+                            log::warn!("Failed to save config: {}", e);
+                        }
+
+                        // Auto-join any saved rooms.
+                        if let Some(ref tx) = self.xmpp_cmd_tx
+                        {
+                            for room_jid in &self.saved_config.rooms
+                            {
+                                let _ = tx.try_send(xmpp::XmppCommand::JoinRoom(room_jid.clone()));
+                            }
+                        }
 
                         return focus_join_input();
                     }
                     xmpp::XmppEvent::Disconnected(reason) =>
                     {
                         error!("Disconnected: {}", reason);
+
+                        // If an auto-login attempt failed, the saved password is likely
+                        // stale. Delete it so we don't loop on it next launch.
+                        if self.auto_login_attempt
+                        {
+                            if let Some(jid) = self.saved_config.jid.clone()
+                            {
+                                let _ = storage::delete_password(&jid);
+                            }
+
+                            self.remember_me = false;
+                        }
 
                         self.connect_error = Some(reason);
                         self.connected_jid = None;
@@ -218,6 +347,8 @@ impl Snack
                         self.join_input.clear();
                         self.xmpp_cmd_tx = None;
                         self.xmpp_cmd_rx = None;
+                        self.pending_save_password = None;
+                        self.auto_login_attempt = false;
 
                         return focus_jid_input();
                     }
@@ -225,6 +356,17 @@ impl Snack
                     {
                         self.joining_room = None;
                         self.join_error = None;
+
+                        // Persist room if user opted in and it's not already saved.
+                        if self.save_room && !self.saved_config.rooms.iter().any(|r| r == &jid)
+                        {
+                            self.saved_config.rooms.push(jid.clone());
+
+                            if let Err(e) = storage::save(&self.saved_config)
+                            {
+                                log::warn!("Failed to save room to config: {}", e);
+                            }
+                        }
 
                         if let Some(pos) = self.rooms.iter().position(|r| r.jid == jid)
                         {
@@ -417,6 +559,20 @@ impl Snack
 
                 return focus_jid_input();
             }
+            Message::ForgetAutoLogin =>
+            {
+                if let Some(jid) = self.saved_config.jid.take()
+                {
+                    let _ = storage::delete_password(&jid);
+                }
+
+                self.remember_me = false;
+
+                if let Err(e) = storage::save(&self.saved_config)
+                {
+                    log::warn!("Failed to save config after removing auto-login: {}", e);
+                }
+            }
             Message::SelectRoom(index) =>
             {
                 // Stamp the room we're leaving so messages arriving while away show as new.
@@ -538,9 +694,21 @@ impl Snack
 
                         let _ = tx.try_send(xmpp::XmppCommand::LeaveRoom
                         {
-                            room: room_jid,
+                            room: room_jid.clone(),
                             nick,
                         });
+                    }
+
+                    // Stop auto-joining this room next time.
+                    let before = self.saved_config.rooms.len();
+                    self.saved_config.rooms.retain(|r| r != &room_jid);
+
+                    if self.saved_config.rooms.len() != before
+                    {
+                        if let Err(e) = storage::save(&self.saved_config)
+                        {
+                            log::warn!("Failed to save config after leaving room: {}", e);
+                        }
                     }
 
                     // Room removal is driven by XmppEvent::RoomLeft.

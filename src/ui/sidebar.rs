@@ -20,9 +20,20 @@ pub fn view(state: &Snack) -> Element<'_, Message>
         .padding(4)
         .style(button::text);
 
+    let mut action_row = row![disconnect_btn, text("").width(Fill)];
+
+    if state.saved_config.jid.is_some()
+    {
+        let forget_btn = button(text("Remove auto-login").size(11))
+            .on_press(Message::ForgetAutoLogin)
+            .padding(4)
+            .style(button::text);
+        action_row = action_row.push(forget_btn);
+    }
+
     let account_row = column![
         account_label,
-        disconnect_btn,
+        action_row,
     ].spacing(4).width(Fill);
 
     let sidebar_header = row![
