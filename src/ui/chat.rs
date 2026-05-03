@@ -5,7 +5,7 @@ use crate::{ Message, Selection, Snack, MESSAGE_SCROLL_ID, MESSAGE_INPUT_ID };
 use crate::room::message::{ Message as RoomMessage, EventKind };
 use crate::ui::{ join, style };
 
-/// Split text into alternating (plain, url) fragments.
+// Split text into alternating (plain, url) fragments.
 fn parse_urls(body: &str) -> Vec<(&str, bool)>
 {
     let mut parts = Vec::new();

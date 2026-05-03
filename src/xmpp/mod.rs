@@ -19,10 +19,6 @@ struct ChannelInner
     password: String,
 }
 
-/// A cloneable handle to the command receiver, used as part of the subscription key.
-/// Equality and hashing are by pointer identity so the same channel maps to the same subscription.
-/// Holds the credentials so they are consumed once when the connection starts and never
-/// kept in the long-lived application state.
 #[derive(Clone)]
 pub struct CommandChannel(Arc<Mutex<ChannelInner>>);
 
