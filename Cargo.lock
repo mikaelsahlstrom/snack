@@ -1847,7 +1847,7 @@ dependencies = [
 [[package]]
 name = "libxmpp"
 version = "0.1.0"
-source = "git+https://github.com/mikaelsahlstrom/libxmpp.git?branch=main#6b8f604d114f220d11872b97cf42991dcd4cd603"
+source = "git+https://github.com/mikaelsahlstrom/libxmpp.git?branch=main#ee6288327d5a1fb2113852250e6e6cc78ccc17c7"
 dependencies = [
  "base64",
  "hmac",

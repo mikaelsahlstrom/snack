@@ -268,6 +268,33 @@ impl Snack
 
                         return focus_join_input();
                     }
+                    xmpp::XmppEvent::PresenceError { from, condition, text } =>
+                    {
+                        let is_join_error = self.joining_room.as_ref().map_or(false, |room|
+                        {
+                            from == *room || from.starts_with(&format!("{}/", room))
+                        });
+
+                        if is_join_error
+                        {
+                            let message = match condition.as_str()
+                            {
+                                "item-not-found" => "Room does not exist.".to_string(),
+                                "not-allowed" => "Not allowed to join this room.".to_string(),
+                                "forbidden" => "You are banned from this room.".to_string(),
+                                "conflict" => "Nickname is already in use.".to_string(),
+                                "service-unavailable" => "Room service is unavailable.".to_string(),
+                                "registration-required" => "Registration is required to join this room.".to_string(),
+                                "not-authorized" => "Not authorized to join this room.".to_string(),
+                                _ => text.unwrap_or_else(|| format!("Could not join room: {}.", condition)),
+                            };
+
+                            self.joining_room = None;
+                            self.join_error = Some(message);
+
+                            return focus_join_input();
+                        }
+                    }
                     xmpp::XmppEvent::RoomLeft(jid) =>
                     {
                         if let Some(pos) = self.rooms.iter().position(|r| r.jid == jid)
@@ -453,6 +480,7 @@ impl Snack
             Message::HideJoinPanel =>
             {
                 self.show_join_panel = false;
+                self.join_error = None;
 
                 return focus_input();
             }

@@ -71,6 +71,12 @@ pub enum XmppEvent
         room: String,
         subject: String,
     },
+    PresenceError
+    {
+        from: String,
+        condition: String,
+        text: Option<String>,
+    },
 }
 
 pub fn connect(cmd: CommandChannel) -> impl iced::futures::Stream<Item = XmppEvent>
@@ -160,6 +166,10 @@ pub fn connect(cmd: CommandChannel) -> impl iced::futures::Stream<Item = XmppEve
                                         ::xmpp::XmppEvent::RoomSubject { room, subject } =>
                                         {
                                             Some(XmppEvent::RoomSubject { room, subject })
+                                        }
+                                        ::xmpp::XmppEvent::PresenceError { from, error_type: _, condition, text } =>
+                                        {
+                                            Some(XmppEvent::PresenceError { from, condition, text })
                                         }
                                         _ => None,
                                     };
