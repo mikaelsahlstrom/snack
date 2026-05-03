@@ -42,7 +42,7 @@ pub fn view(state: &Snack) -> Element<'_, Message>
     }
 
     let mut buttons = row![].spacing(8);
-    if state.active_room.is_some() && !joining
+    if state.active.is_some() && !joining
     {
         let cancel_btn = button(text("Cancel").size(14))
             .on_press(Message::HideJoinPanel)

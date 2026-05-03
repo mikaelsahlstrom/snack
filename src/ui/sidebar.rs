@@ -1,7 +1,7 @@
 use iced::{ Element, Fill, Length };
 use iced::widget::{ button, column, container, row, scrollable, text };
 
-use crate::{ Message, Snack };
+use crate::{ Message, Selection, Snack };
 use crate::ui::style;
 
 pub fn view(state: &Snack) -> Element<'_, Message>
@@ -77,7 +77,7 @@ pub fn view(state: &Snack) -> Element<'_, Message>
         for &i in indices
         {
             let r = &state.rooms[i];
-            let is_active = state.active_room == Some(i);
+            let is_active = state.active == Some(Selection::Room(i));
             let icon = if r.unread { "\u{2022}" } else { " " };
             let title_text = if r.unread
             {
@@ -109,8 +109,45 @@ pub fn view(state: &Snack) -> Element<'_, Message>
         column(items).spacing(2).width(Fill)
     );
 
+    // Chats section.
+    let chats_header = text("Chats").size(14);
+    let mut chat_items: Vec<Element<'_, Message>> = Vec::new();
+
+    for (i, c) in state.chats.iter().enumerate()
+    {
+        let is_active = state.active == Some(Selection::Chat(i));
+        let icon = if c.unread { "\u{2022}" } else { " " };
+        let title_text = if c.unread
+        {
+            text(&c.title).size(14).font(iced::Font { weight: iced::font::Weight::Bold, ..Default::default() })
+        }
+        else
+        {
+            text(&c.title).size(14)
+        };
+
+        let label = row![
+            text(icon).size(14),
+            title_text,
+        ].spacing(6).align_y(iced::Alignment::Center);
+
+        let btn_style = if is_active { style::room_button_active } else { button::text };
+
+        let item = button(label)
+            .on_press(Message::SelectChat(i))
+            .width(Fill)
+            .padding(6)
+            .style(btn_style);
+
+        chat_items.push(item.into());
+    }
+
+    let chats_list = scrollable(
+        column(chat_items).spacing(2).width(Fill)
+    );
+
     return container(
-        column![account_row, sidebar_header, list].spacing(8).width(Fill)
+        column![account_row, sidebar_header, list, chats_header, chats_list].spacing(8).width(Fill)
     )
     .width(Length::Fixed(200.0))
     .height(Fill)
