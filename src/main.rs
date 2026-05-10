@@ -100,6 +100,7 @@ pub enum Message
     JoinRoom,
     DismissJoinError,
     LeaveRoom,
+    CloseChat,
     OpenUrl(String),
     ForgetAutoLogin,
     WindowFocused,
@@ -875,6 +876,21 @@ impl Snack
                     // Room removal is driven by XmppEvent::RoomLeft.
                 }
             }
+            Message::CloseChat =>
+            {
+                if let Some(Selection::Chat(index)) = self.active
+                {
+                    self.chats.remove(index);
+                    if self.chats.is_empty()
+                    {
+                        self.active = self.rooms.first().map(|_| Selection::Room(0));
+                    }
+                    else
+                    {
+                        self.active = Some(Selection::Chat(index.saturating_sub(1)));
+                    }
+                }
+            }
             Message::OpenUrl(url) =>
             {
                 if let Err(e) = open::that(&url)
@@ -912,9 +928,20 @@ impl Snack
             {
                 let room_list = ui::sidebar::view(self);
                 let center = ui::chat::view(self);
-                let member_list = ui::members::view(self);
 
-                return row![room_list, center, member_list]
+                let show_members = matches!(self.active, Some(Selection::Room(_)));
+
+                if show_members
+                {
+                    let member_list = ui::members::view(self);
+                    return row![room_list, center, member_list]
+                        .spacing(0)
+                        .height(Fill)
+                        .width(Fill)
+                        .into();
+                }
+
+                return row![room_list, center]
                     .spacing(0)
                     .height(Fill)
                     .width(Fill)
