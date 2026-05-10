@@ -566,18 +566,30 @@ impl Snack
 
                             let is_active = self.active == Some(Selection::Room(idx));
 
-                            if !is_active
-                            {
-                                self.rooms[idx].unread = true;
-                            }
-
                             let own_nick = self.connected_jid
                                 .as_deref()
                                 .and_then(|j| j.split('@').next())
                                 .unwrap_or("");
-                            if nick == own_nick && self.rooms[idx].read_marker == Some(msg_index)
+
+                            if !is_active
                             {
-                                self.rooms[idx].read_marker = Some(msg_index + 1);
+                                self.rooms[idx].unread = true;
+                                if self.rooms[idx].read_marker.is_none()
+                                {
+                                    self.rooms[idx].read_marker = Some(msg_index);
+                                }
+                            }
+                            else if nick == own_nick
+                            {
+                                // Own echo in active room: advance marker past our message so it
+                                // never appears in the "new messages" section.
+                                if let Some(marker) = self.rooms[idx].read_marker
+                                {
+                                    if marker <= msg_index
+                                    {
+                                        self.rooms[idx].read_marker = Some(msg_index + 1);
+                                    }
+                                }
                             }
 
                             return snap_to_bottom();
@@ -612,6 +624,7 @@ impl Snack
                         };
 
                         let nick = self.chats[idx].title.clone();
+                        let msg_index = self.chats[idx].messages.len();
                         self.chats[idx].messages.push(room::message::Message::Chat
                         {
                             from: nick,
@@ -622,6 +635,10 @@ impl Snack
                         if self.active != Some(Selection::Chat(idx))
                         {
                             self.chats[idx].unread = true;
+                            if self.chats[idx].read_marker.is_none()
+                            {
+                                self.chats[idx].read_marker = Some(msg_index);
+                            }
                         }
 
                         return snap_to_bottom();
@@ -776,9 +793,12 @@ impl Snack
                             received: chrono::Utc::now(),
                         });
 
-                        if self.chats[index].read_marker == Some(msg_index)
+                        if let Some(marker) = self.chats[index].read_marker
                         {
-                            self.chats[index].read_marker = Some(msg_index + 1);
+                            if marker <= msg_index
+                            {
+                                self.chats[index].read_marker = Some(msg_index + 1);
+                            }
                         }
 
                         self.message_input.clear();
