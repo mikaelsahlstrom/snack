@@ -265,8 +265,17 @@ pub fn view(state: &Snack) -> Element<'_, Message>
         {
             let chat = &state.chats[index];
 
+            let close_btn = button(text("Close").size(12))
+                .on_press(Message::CloseChat)
+                .padding(4)
+                .style(button::text);
+
             let header = container(
-                text(&chat.jid).size(14)
+                row![
+                    text(&chat.jid).size(14),
+                    text("").width(Fill),
+                    close_btn,
+                ].align_y(iced::Alignment::Center).width(Fill)
             )
                 .padding(8)
                 .width(Fill)
