@@ -50,6 +50,15 @@ pub enum Selection
     Chat(usize),
 }
 
+#[derive(Debug, Clone)]
+pub struct NickCompleteState
+{
+    pub prefix_start: usize,
+    pub matches: Vec<String>,
+    pub index: usize,
+    pub last_output: String,
+}
+
 pub struct Snack
 {
     pub(crate) state: AppState,
@@ -72,6 +81,7 @@ pub struct Snack
     pub(crate) saved_config: storage::SavedConfig,
     pub(crate) pending_save_password: Option<String>,
     pub(crate) auto_login_attempt: bool,
+    pub(crate) nick_complete: Option<NickCompleteState>,
 }
 
 #[derive(Debug, Clone)]
@@ -152,6 +162,7 @@ impl Snack
             saved_config,
             pending_save_password: None,
             auto_login_attempt: false,
+            nick_complete: None,
         };
 
         // Auto-login: if a keyring entry exists for the saved JID, connect silently.
@@ -243,6 +254,94 @@ impl Snack
         return Some(Task::done(Message::SelectChat(next_idx - self.rooms.len())));
     }
 
+    // Tab nick completion is only active when the message text input is the
+    // expected focus target — i.e. a Room is selected, we're fully connected,
+    // and no other panel is overlaying the chat view.
+    fn is_message_input_context(&self) -> bool
+    {
+        return self.state == AppState::Connected
+            && !self.show_join_panel
+            && self.joining_room.is_none()
+            && self.join_error.is_none()
+            && matches!(self.active, Some(Selection::Room(_)));
+    }
+
+    fn cycle_nick_completion(&mut self, backward: bool) -> Task<Message>
+    {
+        let Some(Selection::Room(idx)) = self.active else
+        {
+            return Task::none();
+        };
+
+        // Resume an in-progress cycle only if the input wasn't edited in between.
+        let mut state = self.nick_complete
+            .take()
+            .filter(|s| s.last_output == self.message_input);
+
+        if let Some(ref mut s) = state
+        {
+            if backward
+            {
+                s.index = if s.index == 0 { s.matches.len() - 1 } else { s.index - 1 };
+            }
+            else
+            {
+                s.index = (s.index + 1) % s.matches.len();
+            }
+        }
+        else
+        {
+            // Start a fresh cycle: find the partial word at the end of the input
+            // (whitespace-delimited) and gather all matching nicks alphabetically.
+            let input = &self.message_input;
+            let prefix_start = input
+                .char_indices()
+                .rev()
+                .find(|(_, c)| c.is_whitespace())
+                .map(|(i, c)| i + c.len_utf8())
+                .unwrap_or(0);
+            let prefix = &input[prefix_start..];
+
+            if prefix.is_empty()
+            {
+                return Task::none();
+            }
+
+            let prefix_lower = prefix.to_lowercase();
+            let mut matches: Vec<String> = self.rooms[idx].users.iter()
+                .map(|u| u.name.clone())
+                .filter(|n| n.to_lowercase().starts_with(&prefix_lower))
+                .collect();
+            matches.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+            matches.dedup();
+
+            if matches.is_empty()
+            {
+                return Task::none();
+            }
+
+            let index = if backward { matches.len() - 1 } else { 0 };
+            state = Some(NickCompleteState
+            {
+                prefix_start,
+                matches,
+                index,
+                last_output: String::new(),
+            });
+        }
+
+        let mut state = state.expect("state populated above");
+        let nick = &state.matches[state.index];
+        let suffix = if state.prefix_start == 0 { ": " } else { " " };
+        let new_input = format!("{}{}{}", &self.message_input[..state.prefix_start], nick, suffix);
+
+        self.message_input = new_input.clone();
+        state.last_output = new_input;
+        self.nick_complete = Some(state);
+
+        return iced::widget::operation::move_cursor_to_end(Id::new(MESSAGE_INPUT_ID));
+    }
+
     fn update(&mut self, message: Message) -> Task<Message>
     {
         match message
@@ -250,10 +349,18 @@ impl Snack
             Message::Ignore => {}
             Message::TabPressed =>
             {
+                if self.is_message_input_context()
+                {
+                    return self.cycle_nick_completion(false);
+                }
                 return iced::widget::operation::focus_next();
             }
             Message::ShiftTabPressed =>
             {
+                if self.is_message_input_context()
+                {
+                    return self.cycle_nick_completion(true);
+                }
                 return iced::widget::operation::focus_previous();
             }
             Message::NextSelection =>
@@ -784,6 +891,10 @@ impl Snack
             }
             Message::InputChanged(value) =>
             {
+                if self.nick_complete.as_ref().is_some_and(|s| s.last_output != value)
+                {
+                    self.nick_complete = None;
+                }
                 self.message_input = value;
             }
             Message::SendMessage =>
@@ -813,6 +924,7 @@ impl Snack
                         }
 
                         self.message_input.clear();
+                        self.nick_complete = None;
 
                         return Task::batch([snap_to_bottom(), focus_input()]);
                     }
@@ -857,6 +969,7 @@ impl Snack
                         }
 
                         self.message_input.clear();
+                        self.nick_complete = None;
 
                         return Task::batch([snap_to_bottom(), focus_input()]);
                     }
