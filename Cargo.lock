@@ -3513,7 +3513,7 @@ dependencies = [
 
 [[package]]
 name = "snack"
-version = "0.1.0"
+version = "0.1.6"
 dependencies = [
  "apple-native-keyring-store",
  "chrono",
