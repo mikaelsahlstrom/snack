@@ -90,6 +90,8 @@ pub enum Message
     Ignore,
     TabPressed,
     ShiftTabPressed,
+    NextSelection,
+    PrevSelection,
     JidInputChanged(String),
     PasswordInputChanged(String),
     RememberMeToggled(bool),
@@ -213,6 +215,45 @@ impl Snack
         }
     }
 
+    // Step through the flat list of sidebar entries (rooms first, then chats),
+    // wrapping at either end. Returns the Task that performs the selection, or
+    // None when there is nothing to select.
+    fn step_selection(&self, forward: bool) -> Option<Task<Message>>
+    {
+        if self.state != AppState::Connected
+        {
+            return None;
+        }
+
+        let total = self.rooms.len() + self.chats.len();
+        if total == 0
+        {
+            return None;
+        }
+
+        let next_idx = match self.active
+        {
+            None => if forward { 0 } else { total - 1 },
+            Some(Selection::Room(i)) =>
+            {
+                let cur = i;
+                if forward { (cur + 1) % total } else { (cur + total - 1) % total }
+            }
+            Some(Selection::Chat(i)) =>
+            {
+                let cur = self.rooms.len() + i;
+                if forward { (cur + 1) % total } else { (cur + total - 1) % total }
+            }
+        };
+
+        if next_idx < self.rooms.len()
+        {
+            return Some(Task::done(Message::SelectRoom(next_idx)));
+        }
+
+        return Some(Task::done(Message::SelectChat(next_idx - self.rooms.len())));
+    }
+
     // Tab nick completion is only active when the message text input is the
     // expected focus target — i.e. a Room is selected, we're fully connected,
     // and no other panel is overlaying the chat view.
@@ -321,6 +362,20 @@ impl Snack
                     return self.cycle_nick_completion(true);
                 }
                 return iced::widget::operation::focus_previous();
+            }
+            Message::NextSelection =>
+            {
+                if let Some(task) = self.step_selection(true)
+                {
+                    return task;
+                }
+            }
+            Message::PrevSelection =>
+            {
+                if let Some(task) = self.step_selection(false)
+                {
+                    return task;
+                }
             }
             Message::JidInputChanged(value) =>
             {
@@ -1096,6 +1151,18 @@ impl Snack
                         return Message::ShiftTabPressed;
                     }
                     return Message::TabPressed;
+                }
+
+                if modifiers.alt() && !modifiers.shift() && !modifiers.control() && !modifiers.command()
+                {
+                    if key == iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowUp)
+                    {
+                        return Message::PrevSelection;
+                    }
+                    if key == iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowDown)
+                    {
+                        return Message::NextSelection;
+                    }
                 }
             }
 
