@@ -883,7 +883,14 @@ impl Snack
                         }
                     }
 
-                    // Room removal is driven by XmppEvent::RoomLeft.
+                    // Remove the room immediately rather than waiting for the
+                    // server to confirm via XmppEvent::RoomLeft — if the
+                    // connection is dropped or the command never reaches the
+                    // server, the user is otherwise stuck with a phantom room.
+                    // The RoomLeft handler becomes a no-op if the room is
+                    // already gone.
+                    self.rooms.remove(index);
+                    self.active = None;
                 }
             }
             Message::CloseChat =>
