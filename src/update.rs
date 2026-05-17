@@ -1,6 +1,6 @@
 use iced::Task;
 use iced::widget::Id;
-use log::error;
+use log::{ error, warn };
 
 use crate::app::{
     focus_input, focus_jid_input, focus_join_input, snap_to_bottom,
@@ -9,6 +9,17 @@ use crate::app::{
 };
 use crate::message::Message;
 use crate::{ room, storage, xmpp };
+
+fn send_notification(summary: &str, body: &str)
+{
+    if let Err(e) = notify_rust::Notification::new()
+        .summary(summary)
+        .body(body)
+        .show()
+    {
+        warn!("Failed to send notification: {}", e);
+    }
+}
 
 impl Snack
 {
@@ -576,6 +587,23 @@ impl Snack
                                 }
                             }
 
+                            if !self.window_focused && nick != own_nick && !own_nick.is_empty()
+                            {
+                                if let Some(room::message::Message::Chat { body, .. }) =
+                                    self.rooms[idx].messages.last()
+                                {
+                                    if body.to_lowercase().contains(&own_nick.to_lowercase())
+                                    {
+                                        let room_name =
+                                            room.split('@').next().unwrap_or(&room);
+                                        send_notification(
+                                            &format!("{} in {}", nick, room_name),
+                                            body,
+                                        );
+                                    }
+                                }
+                            }
+
                             return snap_to_bottom();
                         }
                     }
@@ -622,6 +650,26 @@ impl Snack
                             if self.chats[idx].read_marker.is_none()
                             {
                                 self.chats[idx].read_marker = Some(msg_index);
+                            }
+                        }
+
+                        if !self.window_focused
+                        {
+                            let own_nick = self.connected_jid
+                                .as_deref()
+                                .and_then(|j| j.split('@').next())
+                                .unwrap_or("");
+
+                            if !own_nick.is_empty()
+                            {
+                                if let Some(room::message::Message::Chat { from, body, .. }) =
+                                    self.chats[idx].messages.last()
+                                {
+                                    if body.to_lowercase().contains(&own_nick.to_lowercase())
+                                    {
+                                        send_notification(from, body);
+                                    }
+                                }
                             }
                         }
 
@@ -926,6 +974,8 @@ impl Snack
             }
             Message::WindowUnfocused =>
             {
+                self.window_focused = false;
+
                 for room in self.rooms.iter_mut()
                 {
                     room.read_marker = Some(room.messages.len());
@@ -936,7 +986,10 @@ impl Snack
                     chat.read_marker = Some(chat.messages.len());
                 }
             }
-            Message::WindowFocused => {}
+            Message::WindowFocused =>
+            {
+                self.window_focused = true;
+            }
         }
 
         return Task::none();
