@@ -77,6 +77,7 @@ pub struct Snack
     pub(crate) pending_save_password: Option<String>,
     pub(crate) auto_login_attempt: bool,
     pub(crate) nick_complete: Option<NickCompleteState>,
+    pub(crate) window_focused: bool,
 }
 
 impl Snack
@@ -109,6 +110,7 @@ impl Snack
             pending_save_password: None,
             auto_login_attempt: false,
             nick_complete: None,
+            window_focused: true,
         };
 
         // Auto-login: if a keyring entry exists for the saved JID, connect silently.
