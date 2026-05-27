@@ -560,13 +560,15 @@ impl Snack
                             });
 
                             let is_active = self.active == Some(Selection::Room(idx));
+                            let user_is_watching = is_active && self.window_focused;
 
                             let own_nick = self.connected_jid
                                 .as_deref()
                                 .and_then(|j| j.split('@').next())
                                 .unwrap_or("");
+                            let is_own = nick == own_nick;
 
-                            if !is_active
+                            if !user_is_watching && !is_own
                             {
                                 self.rooms[idx].unread = true;
                                 if self.rooms[idx].read_marker.is_none()
@@ -574,7 +576,7 @@ impl Snack
                                     self.rooms[idx].read_marker = Some(msg_index);
                                 }
                             }
-                            else if nick == own_nick
+                            else if is_own && is_active
                             {
                                 // Own echo in active room: advance marker past our message so it
                                 // never appears in the "new messages" section.
@@ -587,12 +589,12 @@ impl Snack
                                 }
                             }
 
-                            if !self.window_focused && nick != own_nick && !own_nick.is_empty()
+                            if !self.window_focused && !is_own
                             {
                                 if let Some(room::message::Message::Chat { body, .. }) =
                                     self.rooms[idx].messages.last()
                                 {
-                                    if body.to_lowercase().contains(&own_nick.to_lowercase())
+                                    if room::message::mentions(body, own_nick)
                                     {
                                         let room_name =
                                             room.split('@').next().unwrap_or(&room);
@@ -644,7 +646,10 @@ impl Snack
                             received: timestamp,
                         });
 
-                        if self.active != Some(Selection::Chat(idx))
+                        let is_active_chat = self.active == Some(Selection::Chat(idx));
+                        let user_is_watching = is_active_chat && self.window_focused;
+
+                        if !user_is_watching
                         {
                             self.chats[idx].unread = true;
                             if self.chats[idx].read_marker.is_none()
@@ -655,21 +660,10 @@ impl Snack
 
                         if !self.window_focused
                         {
-                            let own_nick = self.connected_jid
-                                .as_deref()
-                                .and_then(|j| j.split('@').next())
-                                .unwrap_or("");
-
-                            if !own_nick.is_empty()
+                            if let Some(room::message::Message::Chat { from, body, .. }) =
+                                self.chats[idx].messages.last()
                             {
-                                if let Some(room::message::Message::Chat { from, body, .. }) =
-                                    self.chats[idx].messages.last()
-                                {
-                                    if body.to_lowercase().contains(&own_nick.to_lowercase())
-                                    {
-                                        send_notification(from, body);
-                                    }
-                                }
+                                send_notification(from, body);
                             }
                         }
 
@@ -717,7 +711,6 @@ impl Snack
                 if let Some(r) = self.rooms.get_mut(index)
                 {
                     r.unread = false;
-                    r.read_marker = None;
                 }
 
                 return Task::batch([snap_to_bottom(), focus_input()]);
@@ -731,7 +724,6 @@ impl Snack
                 if let Some(c) = self.chats.get_mut(index)
                 {
                     c.unread = false;
-                    c.read_marker = None;
                 }
 
                 return Task::batch([snap_to_bottom(), focus_input()]);
@@ -976,19 +968,54 @@ impl Snack
             {
                 self.window_focused = false;
 
-                for room in self.rooms.iter_mut()
+                // Stamp the read marker on the active room/chat so messages
+                // arriving while the window is unfocused are flagged as new.
+                // Non-active rooms/chats already have their marker set from
+                // when the user switched away — don't clobber it.
+                match self.active
                 {
-                    room.read_marker = Some(room.messages.len());
-                }
-
-                for chat in self.chats.iter_mut()
-                {
-                    chat.read_marker = Some(chat.messages.len());
+                    Some(Selection::Room(idx)) =>
+                    {
+                        if let Some(r) = self.rooms.get_mut(idx)
+                        {
+                            r.read_marker = Some(r.messages.len());
+                        }
+                    }
+                    Some(Selection::Chat(idx)) =>
+                    {
+                        if let Some(c) = self.chats.get_mut(idx)
+                        {
+                            c.read_marker = Some(c.messages.len());
+                        }
+                    }
+                    None => {}
                 }
             }
             Message::WindowFocused =>
             {
                 self.window_focused = true;
+
+                // Clear the unread badge on the active room/chat — the user is
+                // now looking at it. Leave read_marker so the "new messages"
+                // divider remains visible until they navigate away.
+                match self.active
+                {
+                    Some(Selection::Room(idx)) =>
+                    {
+                        if let Some(r) = self.rooms.get_mut(idx)
+                        {
+                            r.unread = false;
+                        }
+                    }
+                    Some(Selection::Chat(idx)) =>
+                    {
+                        if let Some(c) = self.chats.get_mut(idx)
+                        {
+                            c.unread = false;
+                        }
+                    }
+                    None => {}
+                }
             }
         }
 
