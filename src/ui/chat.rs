@@ -123,17 +123,7 @@ fn render_messages<'a>(
                     .spacing(4).width(Fill);
 
                 let is_mention = my_nick
-                    .is_some_and(|nick|
-                    {
-                        let body_lower = body.to_lowercase();
-                        body_lower.match_indices(nick).any(|(start, matched)|
-                        {
-                            let end = start + matched.len();
-                            let before_ok = start == 0 || !body_lower.as_bytes()[start - 1].is_ascii_alphanumeric();
-                            let after_ok = end == body_lower.len() || !body_lower.as_bytes()[end].is_ascii_alphanumeric();
-                            before_ok && after_ok
-                        })
-                    });
+                    .is_some_and(|nick| crate::room::message::mentions(body, nick));
 
                 let msg_container = container(msg_row).padding(4).width(Fill);
 
@@ -260,10 +250,9 @@ pub fn view(state: &Snack) -> Element<'_, Message>
         return join::view(state);
     }
 
-    let my_nick: Option<String> = state.connected_jid
+    let my_nick: Option<&str> = state.connected_jid
         .as_deref()
-        .and_then(|j| j.split('@').next())
-        .map(|n| n.to_lowercase());
+        .and_then(|j| j.split('@').next());
 
     match state.active
     {
@@ -287,7 +276,7 @@ pub fn view(state: &Snack) -> Element<'_, Message>
                 .width(Fill)
                 .style(container::bordered_box);
 
-            let messages = render_messages(&room.messages, room.read_marker, my_nick.as_deref());
+            let messages = render_messages(&room.messages, room.read_marker, my_nick);
 
             return column![topic_label, messages, input_row(state)]
                 .spacing(8)
@@ -316,7 +305,7 @@ pub fn view(state: &Snack) -> Element<'_, Message>
                 .width(Fill)
                 .style(container::bordered_box);
 
-            let messages = render_messages(&chat.messages, chat.read_marker, my_nick.as_deref());
+            let messages = render_messages(&chat.messages, chat.read_marker, my_nick);
 
             return column![header, messages, input_row(state)]
                 .spacing(8)
