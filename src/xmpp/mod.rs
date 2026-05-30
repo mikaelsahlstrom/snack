@@ -124,7 +124,7 @@ pub fn connect(cmd: CommandChannel) -> impl iced::futures::Stream<Item = XmppEve
                     Ok(x) => x,
                     Err(e) =>
                     {
-                        let _ = bridge_tx.send(XmppEvent::Disconnected(e)).await;
+                        let _ = bridge_tx.send(XmppEvent::Disconnected(e.to_string())).await;
                         return;
                     }
                 };
@@ -211,7 +211,7 @@ pub fn connect(cmd: CommandChannel) -> impl iced::futures::Stream<Item = XmppEve
                                         let _ = bridge_tx.send(XmppEvent::RoomJoinFailed
                                         {
                                             room: room_jid,
-                                            reason: e,
+                                            reason: e.to_string(),
                                         }).await;
                                     }
                                 }
