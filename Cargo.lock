@@ -2018,9 +2018,9 @@ dependencies = [
 
 [[package]]
 name = "libxmpp"
-version = "0.1.3"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "906945112125ce81c4cd5a5aae6666319a31243aca3760c809720d5d24cc448b"
+checksum = "32bb91742d977df0057cb6c1cc1fbd08ff3f7409dde4cffb92c87ef19b083eb9"
 dependencies = [
  "base64",
  "hmac 0.13.0",
