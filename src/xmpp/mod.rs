@@ -14,6 +14,10 @@ const MAX_BACKOFF: Duration = Duration::from_secs(60);
 const PING_INTERVAL: Duration = Duration::from_secs(30);
 /// How long to wait for a ping reply before treating the connection as dead.
 const PING_TIMEOUT: Duration = Duration::from_secs(10);
+/// Upper bound on a single connection-setup attempt (DNS, TCP, TLS, SASL,
+/// resource bind). Without this a reconnect fired before the network is back
+/// (e.g. right after wake-from-sleep) blocks forever on a dead socket.
+const SETUP_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug)]
 pub enum XmppCommand
@@ -321,7 +325,22 @@ pub fn connect(cmd: CommandChannel) -> impl iced::futures::Stream<Item = XmppEve
 
                 loop
                 {
-                    match ::xmpp::XmppClient::new(&jid, &password).await
+                    // Bound the setup path with a timeout. On expiry the in-flight
+                    // future is dropped, cancelling the stalled connect, and we
+                    // synthesize a transient error so the existing Err arm handles
+                    // it (retry when reconnecting, drop to login on first connect).
+                    let result = match tokio::time::timeout(
+                        SETUP_TIMEOUT,
+                        ::xmpp::XmppClient::new(&jid, &password),
+                    ).await
+                    {
+                        Ok(result) => result,
+                        Err(_) => Err(::xmpp::XmppError::Timeout(
+                            "connection setup timed out".to_string(),
+                        )),
+                    };
+
+                    match result
                     {
                         Ok((client, event_rx)) =>
                         {
