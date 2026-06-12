@@ -3,7 +3,7 @@ use iced::keyboard;
 use iced::widget::{ button, column, container, rich_text, row, scrollable, span, text, text_editor, Id };
 
 use crate::{ Message, Selection, Snack, MESSAGE_SCROLL_ID, MESSAGE_INPUT_ID };
-use crate::room::message::{ Message as RoomMessage, EventKind };
+use crate::room::message::{ ChatStatus, Message as RoomMessage, EventKind };
 use crate::ui::{ join, style };
 
 // Split text into alternating (plain, url) fragments.
@@ -80,7 +80,7 @@ fn render_messages<'a>(
 
         match m
         {
-            RoomMessage::Chat { from, body, received } =>
+            RoomMessage::Chat { from, body, received, status } =>
             {
                 let local_time = received.with_timezone(&chrono::Local);
                 let timestamp = if local_time.date_naive() == today
@@ -119,8 +119,22 @@ fn render_messages<'a>(
                     .size(14)
                     .width(Fill);
 
-                let msg_row = row![time_label, nick_label, body_label]
+                let mut msg_row = row![time_label, nick_label, body_label]
                     .spacing(4).width(Fill);
+
+                // Delivery badge for our own slow/failed sends, right-aligned.
+                // Confirmed messages (and ones still within the grace period) get
+                // none, so a normal send never flickers an indicator.
+                match status
+                {
+                    ChatStatus::Pending(_) => msg_row = msg_row.push(
+                        text("sending…").size(11).color(Color::from_rgb(0.45, 0.48, 0.54)),
+                    ),
+                    ChatStatus::Failed(_) => msg_row = msg_row.push(
+                        text("failed").size(11).color(Color::from_rgb(0.85, 0.45, 0.45)),
+                    ),
+                    ChatStatus::Sending(_) | ChatStatus::Confirmed => {}
+                }
 
                 let is_mention = my_nick
                     .is_some_and(|nick| crate::room::message::mentions(body, nick));

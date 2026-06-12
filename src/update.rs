@@ -3,12 +3,22 @@ use iced::widget::{ text_editor, Id };
 use log::{ error, warn };
 
 use crate::app::{
-    focus_input, focus_jid_input, focus_join_input, snap_to_bottom,
+    delay_then, focus_input, focus_jid_input, focus_join_input, snap_to_bottom,
     AppState, NickCompleteState, Selection, Snack,
     ACCOUNT_PASSWORD_INPUT_ID, MESSAGE_INPUT_ID,
 };
 use crate::message::Message;
+use crate::room::message::ChatStatus;
 use crate::{ room, storage, xmpp };
+
+// An optimistically-shown outgoing room message stays badge-free for this long,
+// so a normal fast echo never flickers a "sending…" indicator; only a slow send
+// grows one.
+const SEND_PENDING_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
+// If the server hasn't echoed an outgoing message back within this long, show it
+// as failed. Kept generous so a merely-slow connection doesn't false-flag; a late
+// echo still upgrades it back to confirmed regardless.
+const SEND_FAIL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 fn send_notification(summary: &str, body: &str)
 {
@@ -177,6 +187,65 @@ impl Snack
         self.nick_complete = Some(state);
 
         return iced::widget::operation::focus(Id::new(MESSAGE_INPUT_ID));
+    }
+
+    // Hand out a fresh negative temp id for an optimistically-shown outgoing message.
+    fn next_pending_id(&mut self) -> i64
+    {
+        self.pending_seq -= 1;
+        return self.pending_seq;
+    }
+
+    // The server echoed one of our own room messages: upgrade the matching
+    // optimistic entry (the oldest still-unconfirmed one with the same sender +
+    // body) to Confirmed, adopting the server's timestamp. Returns whether a
+    // match was found, so the caller can skip appending a duplicate.
+    fn confirm_pending(
+        &mut self,
+        room_idx: usize,
+        from: &str,
+        body: &str,
+        received: chrono::DateTime<chrono::Utc>,
+    ) -> bool
+    {
+        for m in self.rooms[room_idx].messages.iter_mut()
+        {
+            if let room::message::Message::Chat { from: f, body: b, received: r, status } = m
+            {
+                if *status != ChatStatus::Confirmed && f == from && b == body
+                {
+                    *r = received;
+                    *status = ChatStatus::Confirmed;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // Move the optimistic entry carrying `temp_id` in room `conv` to `to`. A no-op
+    // once it was confirmed (the echo cleared the id, so nothing matches) or if it
+    // was trimmed away. Drives the grace and failure timers; the 500ms grace always
+    // precedes the 20s timeout, so this only ever steps Sending → Pending → Failed.
+    fn transition_pending(&mut self, conv: &str, temp_id: i64, to: ChatStatus)
+    {
+        if let Some(r) = self.rooms.iter_mut().find(|r| r.jid == conv)
+        {
+            for m in r.messages.iter_mut()
+            {
+                if let room::message::Message::Chat { status, .. } = m
+                {
+                    let matches = matches!(status,
+                        ChatStatus::Sending(id) | ChatStatus::Pending(id) | ChatStatus::Failed(id)
+                            if *id == temp_id);
+                    if matches
+                    {
+                        *status = to;
+                        return;
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) fn update(&mut self, message: Message) -> Task<Message>
@@ -596,22 +665,32 @@ impl Snack
                         let room_idx = self.rooms.iter().position(|r| r.jid == room);
                         if let Some(idx) = room_idx
                         {
-                            let msg_index = self.rooms[idx].messages.len();
-                            self.rooms[idx].messages.push(room::message::Message::Chat
-                            {
-                                from: nick.clone(),
-                                body,
-                                received: timestamp,
-                            });
-
                             let is_active = self.active == Some(Selection::Room(idx));
                             let user_is_watching = is_active && self.window_focused;
 
                             let own_nick = self.connected_jid
                                 .as_deref()
                                 .and_then(|j| j.split('@').next())
-                                .unwrap_or("");
+                                .unwrap_or("")
+                                .to_string();
                             let is_own = nick == own_nick;
+
+                            // Our own message echoed back: confirm the optimistic
+                            // entry in place (adopting the server timestamp) instead
+                            // of appending a duplicate.
+                            if is_own && self.confirm_pending(idx, &nick, &body, timestamp)
+                            {
+                                return snap_to_bottom();
+                            }
+
+                            let msg_index = self.rooms[idx].messages.len();
+                            self.rooms[idx].messages.push(room::message::Message::Chat
+                            {
+                                from: nick.clone(),
+                                body,
+                                received: timestamp,
+                                status: ChatStatus::Confirmed,
+                            });
 
                             if !user_is_watching && !is_own
                             {
@@ -639,7 +718,7 @@ impl Snack
                                 if let Some(room::message::Message::Chat { body, .. }) =
                                     self.rooms[idx].messages.last()
                                 {
-                                    if room::message::mentions(body, own_nick)
+                                    if room::message::mentions(body, &own_nick)
                                     {
                                         let room_name =
                                             room.split('@').next().unwrap_or(&room);
@@ -689,6 +768,7 @@ impl Snack
                             from: nick,
                             body,
                             received: timestamp,
+                            status: ChatStatus::Confirmed,
                         });
 
                         let is_active_chat = self.active == Some(Selection::Chat(idx));
@@ -837,12 +917,12 @@ impl Snack
                 {
                     Some(Selection::Room(index)) =>
                     {
+                        let room_jid = self.rooms[index].jid.clone();
                         if let Some(ref tx) = self.xmpp_cmd_tx
                         {
-                            let room_jid = self.rooms[index].jid.clone();
                             if tx.try_send(xmpp::XmppCommand::SendRoomMessage
                             {
-                                room: room_jid,
+                                room: room_jid.clone(),
                                 body: body.clone(),
                             }).is_err()
                             {
@@ -850,10 +930,52 @@ impl Snack
                             }
                         }
 
+                        // Show the message right away as Sending. The server echo
+                        // confirms it in place (confirm_pending); the grace timer
+                        // reveals a "sending…" badge only if it's slow, and the
+                        // failure timer flags it if no echo ever arrives.
+                        let own_nick = self.connected_jid
+                            .as_deref()
+                            .and_then(|j| j.split('@').next())
+                            .unwrap_or("me")
+                            .to_string();
+                        let temp_id = self.next_pending_id();
+                        let msg_index = self.rooms[index].messages.len();
+                        self.rooms[index].messages.push(room::message::Message::Chat
+                        {
+                            from: own_nick,
+                            body: body.clone(),
+                            received: chrono::Utc::now(),
+                            status: ChatStatus::Sending(temp_id),
+                        });
+
+                        // Advance the read marker past our own message so it never
+                        // lands in the "new messages" section.
+                        if let Some(marker) = self.rooms[index].read_marker
+                        {
+                            if marker <= msg_index
+                            {
+                                self.rooms[index].read_marker = Some(msg_index + 1);
+                            }
+                        }
+
                         self.message_input = text_editor::Content::new();
                         self.nick_complete = None;
 
-                        return Task::batch([snap_to_bottom(), focus_input()]);
+                        return Task::batch([
+                            snap_to_bottom(),
+                            focus_input(),
+                            delay_then(SEND_PENDING_GRACE, Message::MarkSendPending
+                            {
+                                conversation: room_jid.clone(),
+                                temp_id,
+                            }),
+                            delay_then(SEND_FAIL_TIMEOUT, Message::MarkSendFailed
+                            {
+                                conversation: room_jid,
+                                temp_id,
+                            }),
+                        ]);
                     }
                     Some(Selection::Chat(index)) =>
                     {
@@ -885,6 +1007,7 @@ impl Snack
                             from: own_nick,
                             body,
                             received: chrono::Utc::now(),
+                            status: ChatStatus::Confirmed,
                         });
 
                         if let Some(marker) = self.chats[index].read_marker
@@ -902,6 +1025,17 @@ impl Snack
                     }
                     None => {}
                 }
+            }
+            Message::MarkSendPending { conversation, temp_id } =>
+            {
+                // Grace period elapsed without an echo: reveal the "sending…" badge.
+                self.transition_pending(&conversation, temp_id, ChatStatus::Pending(temp_id));
+            }
+            Message::MarkSendFailed { conversation, temp_id } =>
+            {
+                // Timed out without an echo: flag it. A late echo still upgrades it
+                // back to Confirmed via confirm_pending.
+                self.transition_pending(&conversation, temp_id, ChatStatus::Failed(temp_id));
             }
             Message::ShowJoinPanel =>
             {

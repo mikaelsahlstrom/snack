@@ -30,6 +30,17 @@ pub(crate) fn snap_to_bottom() -> Task<Message>
     iced::widget::operation::snap_to_end(Id::new(MESSAGE_SCROLL_ID))
 }
 
+// Fire `message` once after `delay`. Used to drive the grace/failure timers for
+// optimistically-shown outgoing room messages. Runs on iced's tokio executor,
+// the same one the xmpp worker already relies on for its timers.
+pub(crate) fn delay_then(delay: std::time::Duration, message: Message) -> Task<Message>
+{
+    return Task::perform(
+        async move { tokio::time::sleep(delay).await },
+        move |_| message.clone(),
+    );
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppState
 {
@@ -79,6 +90,9 @@ pub struct Snack
     pub(crate) auto_login_attempt: bool,
     pub(crate) nick_complete: Option<NickCompleteState>,
     pub(crate) window_focused: bool,
+    // Decreasing counter handing out negative temporary ids for optimistically-
+    // shown outgoing room messages, until the server echo gives them their place.
+    pub(crate) pending_seq: i64,
 }
 
 impl Snack
@@ -113,6 +127,7 @@ impl Snack
             auto_login_attempt: false,
             nick_complete: None,
             window_focused: true,
+            pending_seq: -1,
         };
 
         // Auto-login: if a keyring entry exists for the saved JID, connect silently.
