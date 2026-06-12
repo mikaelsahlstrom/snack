@@ -4,7 +4,7 @@ version = "0.1.9"
 edition = "2024"
 
 [dependencies]
-libxmpp = "0.2.1"
+libxmpp = "0.2.4"
 iced = "0.14.0"
 tokio = { version = "1.52.3", features = ["full"] }
 chrono = "0.4.44"
