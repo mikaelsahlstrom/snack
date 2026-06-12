@@ -31,10 +31,16 @@ pub fn view(state: &Snack) -> Element<'_, Message>
         action_row = action_row.push(forget_btn);
     }
 
-    let account_row = column![
+    let mut account_row = column![
         account_label,
-        action_row,
     ].spacing(4).width(Fill);
+
+    if state.reconnecting
+    {
+        account_row = account_row.push(text("Reconnecting…").size(11));
+    }
+
+    account_row = account_row.push(action_row);
 
     let sidebar_header = row![
         text("Rooms").size(14),

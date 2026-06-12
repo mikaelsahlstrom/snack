@@ -355,6 +355,31 @@ impl Snack
 
                         return focus_join_input();
                     }
+                    xmpp::XmppEvent::Reconnecting =>
+                    {
+                        // The session dropped and the worker is retrying. Keep
+                        // rooms/chats/selection in place and just flag the UI.
+                        self.reconnecting = true;
+
+                        return Task::none();
+                    }
+                    xmpp::XmppEvent::Reconnected =>
+                    {
+                        // The session is back. Re-join every open room (saved or
+                        // ad-hoc); RoomJoined refreshes members without disturbing
+                        // history or the current selection.
+                        self.reconnecting = false;
+
+                        if let Some(ref tx) = self.xmpp_cmd_tx
+                        {
+                            for room in &self.rooms
+                            {
+                                let _ = tx.try_send(xmpp::XmppCommand::JoinRoom(room.jid.clone()));
+                            }
+                        }
+
+                        return Task::none();
+                    }
                     xmpp::XmppEvent::Disconnected(reason) =>
                     {
                         error!("Disconnected: {}", reason);
@@ -374,6 +399,7 @@ impl Snack
                         self.connect_error = Some(reason);
                         self.connected_jid = None;
                         self.state = AppState::Login;
+                        self.reconnecting = false;
                         self.rooms.clear();
                         self.chats.clear();
                         self.active = None;
@@ -407,7 +433,8 @@ impl Snack
 
                         if let Some(pos) = self.rooms.iter().position(|r| r.jid == jid)
                         {
-                            self.active = Some(Selection::Room(pos));
+                            // Already open (e.g. re-joined after a reconnect):
+                            // refresh members but leave the selection untouched.
                             self.rooms[pos].users = members.into_iter().map(|m| room::user::User
                             {
                                 jid: m.jid,
@@ -678,6 +705,7 @@ impl Snack
             Message::Disconnect =>
             {
                 self.state = AppState::Login;
+                self.reconnecting = false;
                 self.connected_jid = None;
                 self.rooms.clear();
                 self.chats.clear();

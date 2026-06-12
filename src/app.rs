@@ -57,6 +57,7 @@ pub struct NickCompleteState
 pub struct Snack
 {
     pub(crate) state: AppState,
+    pub(crate) reconnecting: bool,
     pub(crate) jid_input: String,
     pub(crate) password_input: String,
     pub(crate) connected_jid: Option<String>,
@@ -90,6 +91,7 @@ impl Snack
         let mut snack = Self
         {
             state: AppState::Login,
+            reconnecting: false,
             jid_input: saved_config.jid.clone().unwrap_or_default(),
             password_input: String::new(),
             connected_jid: None,
