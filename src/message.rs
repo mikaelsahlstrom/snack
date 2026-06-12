@@ -16,6 +16,9 @@ pub enum Message
     SaveRoomToggled(bool),
     FocusPassword,
     Connect,
+    // User-triggered immediate reconnect: skips the remaining backoff delay
+    // while the worker is retrying after a dropped connection.
+    ForceReconnect,
     CancelConnect,
     XmppEvent(xmpp::XmppEvent),
     Disconnect,

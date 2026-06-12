@@ -26,6 +26,8 @@ pub enum XmppCommand
     LeaveRoom { room: String, nick: String },
     SendRoomMessage { room: String, body: String },
     SendDirectMessage { to: String, body: String },
+    /// User-triggered: skip the remaining reconnect backoff and retry now.
+    ForceReconnect,
 }
 
 struct ChannelInner
@@ -121,14 +123,31 @@ fn is_auth_failure(e: &::xmpp::XmppError) -> bool
     matches!(e, ::xmpp::XmppError::Auth(_) | ::xmpp::XmppError::NoSaslMechanism)
 }
 
-/// Drain commands issued while reconnecting (they can't be delivered, so they
-/// are discarded) and complete only once the channel closes, i.e. on logout.
-async fn drain_until_closed(cmd_rx: &mut tokio::sync::mpsc::Receiver<XmppCommand>)
+/// Outcome of waiting out the reconnect backoff while draining commands that
+/// can't be delivered.
+enum BackoffWait
+{
+    /// The UI logged out: the command sender was dropped.
+    Closed,
+    /// The user asked to skip the rest of the backoff and retry now.
+    ForceReconnect,
+}
+
+/// Drain commands issued while reconnecting (they can't be delivered, so most
+/// are discarded). Completes when the channel closes (logout) or the UI asks
+/// to skip the backoff.
+async fn drain_until_signal(cmd_rx: &mut tokio::sync::mpsc::Receiver<XmppCommand>) -> BackoffWait
 {
     while let Some(cmd) = cmd_rx.recv().await
     {
-        log::debug!("Dropping command issued during reconnect backoff: {:?}", cmd);
+        match cmd
+        {
+            XmppCommand::ForceReconnect => return BackoffWait::ForceReconnect,
+            other => log::debug!("Dropping command issued during reconnect backoff: {:?}", other),
+        }
     }
+
+    return BackoffWait::Closed;
 }
 
 /// Run one established session until it ends. Multiplexes server events, UI
@@ -257,6 +276,11 @@ async fn run_session(
                             error!("Failed to send direct message: {}", e);
                         }
                     }
+                    Some(XmppCommand::ForceReconnect) =>
+                    {
+                        // Only meaningful while reconnecting; the session is
+                        // already up, so there's nothing to do.
+                    }
                     None => break SessionOutcome::LoggedOut,
                 }
             }
@@ -373,15 +397,24 @@ pub fn connect(cmd: CommandChannel) -> impl iced::futures::Stream<Item = XmppEve
 
                     let _ = bridge_tx.send(XmppEvent::Reconnecting).await;
 
-                    // Wait out the backoff, but abort immediately if the UI logs
-                    // out (which drops the command sender and closes cmd_rx).
+                    // Wait out the backoff, but retry immediately if the user
+                    // hits "Reconnect now", or stop if the UI logs out (which
+                    // drops the command sender and closes cmd_rx).
                     tokio::select!
                     {
-                        _ = tokio::time::sleep(backoff) => {}
-                        _ = drain_until_closed(&mut cmd_rx) => return,
+                        _ = tokio::time::sleep(backoff) =>
+                        {
+                            backoff = (backoff * 2).min(MAX_BACKOFF);
+                        }
+                        wait = drain_until_signal(&mut cmd_rx) =>
+                        {
+                            match wait
+                            {
+                                BackoffWait::Closed => return,
+                                BackoffWait::ForceReconnect => backoff = INITIAL_BACKOFF,
+                            }
+                        }
                     }
-
-                    backoff = (backoff * 2).min(MAX_BACKOFF);
                 }
             });
         });
