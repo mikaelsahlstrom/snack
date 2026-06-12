@@ -281,6 +281,20 @@ impl Snack
 
                 return Task::none();
             }
+            Message::ForceReconnect =>
+            {
+                // Manual "get me out of a stuck reconnect": tell the worker to
+                // skip the rest of the backoff and retry now.
+                if self.reconnecting
+                {
+                    if let Some(ref tx) = self.xmpp_cmd_tx
+                    {
+                        let _ = tx.try_send(xmpp::XmppCommand::ForceReconnect);
+                    }
+                }
+
+                return Task::none();
+            }
             Message::CancelConnect =>
             {
                 self.state = AppState::Login;
