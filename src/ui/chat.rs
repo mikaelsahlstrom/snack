@@ -34,9 +34,29 @@ fn parse_urls(body: &str) -> Vec<(&str, bool)>
     return parts;
 }
 
+// A full-width horizontal rule with a centered caption, used to separate
+// sections of the message list (new messages, replayed reconnect history).
+fn divider<'a>(label: &str, color: Color) -> Element<'a, Message>
+{
+    let caption = text(format!("  {}  ", label)).size(11).color(color);
+    let line = move || container(text(""))
+        .height(1)
+        .width(Fill)
+        .style(move |_: &_| container::Style
+        {
+            background: Some(iced::Background::Color(color)),
+            ..Default::default()
+        });
+    return row![line(), caption, line()]
+        .align_y(iced::Alignment::Center)
+        .width(Fill)
+        .into();
+}
+
 fn render_messages<'a>(
     msgs: &'a [RoomMessage],
     read_marker: Option<usize>,
+    history_marker: Option<usize>,
     my_nick: Option<&str>,
 ) -> Element<'a, Message>
 {
@@ -58,24 +78,21 @@ fn render_messages<'a>(
 
     for (i, m) in msgs.iter().enumerate()
     {
-        // Insert a "new messages" divider before the first new message.
-        if read_marker == Some(i) && i < msgs.len()
+        // Insert a "reconnected — history below" divider before the first message
+        // of the backlog the server replayed after a reconnect, so it's clear
+        // where the already-seen chat ends and the (possibly overlapping) new
+        // history begins.
+        if history_marker == Some(i) && i < msgs.len()
         {
-            let accent = Color::from_rgb(0.60, 0.40, 0.40);
-            let new_label = text("  new messages  ").size(11).color(accent);
-            let line = || container(text(""))
-                .height(1)
-                .width(Fill)
-                .style(|_: &_| container::Style
-                {
-                    background: Some(iced::Background::Color(Color::from_rgb(0.60, 0.40, 0.40))),
-                    ..Default::default()
-                });
-            let divider: Element<'a, Message> = row![line(), new_label, line()]
-                .align_y(iced::Alignment::Center)
-                .width(Fill)
-                .into();
-            messages.push(divider);
+            messages.push(divider("reconnected — history below", Color::from_rgb(0.42, 0.52, 0.62)));
+        }
+
+        // Insert a "new messages" divider before the first new message — unless it
+        // would land at the same spot as the reconnected-history divider, which
+        // already marks where the unseen messages begin. Stacking both is noise.
+        if read_marker == Some(i) && history_marker != Some(i) && i < msgs.len()
+        {
+            messages.push(divider("new messages", Color::from_rgb(0.60, 0.40, 0.40)));
         }
 
         match m
@@ -290,7 +307,7 @@ pub fn view(state: &Snack) -> Element<'_, Message>
                 .width(Fill)
                 .style(container::bordered_box);
 
-            let messages = render_messages(&room.messages, room.read_marker, my_nick);
+            let messages = render_messages(&room.messages, room.read_marker, room.history_marker, my_nick);
 
             return column![topic_label, messages, input_row(state)]
                 .spacing(8)
@@ -319,7 +336,8 @@ pub fn view(state: &Snack) -> Element<'_, Message>
                 .width(Fill)
                 .style(container::bordered_box);
 
-            let messages = render_messages(&chat.messages, chat.read_marker, my_nick);
+            // Direct-message chats get no reconnect-history replay, so no divider.
+            let messages = render_messages(&chat.messages, chat.read_marker, None, my_nick);
 
             return column![header, messages, input_row(state)]
                 .spacing(8)
