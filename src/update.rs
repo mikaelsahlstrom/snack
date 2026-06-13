@@ -45,6 +45,9 @@ impl Snack
                 if let Some(r) = self.rooms.get_mut(old_idx)
                 {
                     r.read_marker = Some(r.messages.len());
+                    // The user has seen this room's replayed-history divider;
+                    // dismiss it so it doesn't linger on the next visit.
+                    r.history_marker = None;
                 }
             }
             Some(Selection::Chat(old_idx)) if next != Some(Selection::Chat(old_idx)) =>
@@ -525,6 +528,13 @@ impl Snack
                                 show: m.show,
                                 status: m.status,
                             }).collect();
+
+                            // The server replays a short history right after this
+                            // event (libxmpp flushes RoomJoined before the buffered
+                            // backlog). Mark the boundary so a divider separates the
+                            // old chat from that replayed history, which can repeat
+                            // messages we already have.
+                            self.rooms[pos].history_marker = Some(self.rooms[pos].messages.len());
                         }
                         else
                         {
@@ -545,6 +555,7 @@ impl Snack
                                 messages: Vec::new(),
                                 unread: false,
                                 read_marker: None,
+                                history_marker: None,
                             });
 
                             self.active = Some(Selection::Room(self.rooms.len() - 1));
@@ -702,13 +713,20 @@ impl Snack
                             }
                             else if is_own && is_active
                             {
-                                // Own echo in active room: advance marker past our message so it
-                                // never appears in the "new messages" section.
+                                // Own echo in active room: advance markers past our message so it
+                                // never appears in the "new messages" or replayed-history section.
                                 if let Some(marker) = self.rooms[idx].read_marker
                                 {
                                     if marker <= msg_index
                                     {
                                         self.rooms[idx].read_marker = Some(msg_index + 1);
+                                    }
+                                }
+                                if let Some(marker) = self.rooms[idx].history_marker
+                                {
+                                    if marker <= msg_index
+                                    {
+                                        self.rooms[idx].history_marker = Some(msg_index + 1);
                                     }
                                 }
                             }
@@ -949,13 +967,20 @@ impl Snack
                             status: ChatStatus::Sending(temp_id),
                         });
 
-                        // Advance the read marker past our own message so it never
-                        // lands in the "new messages" section.
+                        // Advance the read/history markers past our own message so it
+                        // never lands in the "new messages" or replayed-history section.
                         if let Some(marker) = self.rooms[index].read_marker
                         {
                             if marker <= msg_index
                             {
                                 self.rooms[index].read_marker = Some(msg_index + 1);
+                            }
+                        }
+                        if let Some(marker) = self.rooms[index].history_marker
+                        {
+                            if marker <= msg_index
+                            {
+                                self.rooms[index].history_marker = Some(msg_index + 1);
                             }
                         }
 
