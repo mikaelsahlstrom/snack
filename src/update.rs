@@ -22,13 +22,21 @@ const SEND_FAIL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20
 
 fn send_notification(summary: &str, body: &str)
 {
-    if let Err(e) = notify_rust::Notification::new()
-        .summary(summary)
-        .body(body)
-        .show()
+    // notify_rust's `show()` is a blocking call. Running it inline on the UI thread
+    // means a slow or unresponsive daemon stalls `update()`, which backs up iced's
+    // shared message sink.
+    let summary = summary.to_string();
+    let body = body.to_string();
+    std::thread::spawn(move ||
     {
-        warn!("Failed to send notification: {}", e);
-    }
+        if let Err(e) = notify_rust::Notification::new()
+            .summary(&summary)
+            .body(&body)
+            .show()
+        {
+            warn!("Failed to send notification: {}", e);
+        }
+    });
 }
 
 impl Snack
