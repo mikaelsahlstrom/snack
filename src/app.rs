@@ -31,8 +31,9 @@ pub(crate) fn snap_to_bottom() -> Task<Message>
 }
 
 // Fire `message` once after `delay`. Used to drive the grace/failure timers for
-// optimistically-shown outgoing room messages. Runs on iced's tokio executor,
-// the same one the xmpp worker already relies on for its timers.
+// optimistically-shown outgoing room messages. `tokio::time::sleep` only works
+// inside a Tokio runtime, so iced is built with its `tokio` executor feature
+// (see Cargo.toml) to ensure `Task::perform` futures are polled there.
 pub(crate) fn delay_then(delay: std::time::Duration, message: Message) -> Task<Message>
 {
     return Task::perform(
