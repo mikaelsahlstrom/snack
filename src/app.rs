@@ -132,18 +132,35 @@ impl Snack
         };
 
         // Auto-login: if a keyring entry exists for the saved JID, connect silently.
-        if let Some(jid) = snack.saved_config.jid.clone()
+        // Otherwise land on the login screen with the saved JID pre-filled.
+        let startup = if let Some(jid) = snack.saved_config.jid.clone()
         {
             if let Some(password) = storage::load_password(&jid)
             {
                 snack.password_input = password;
                 snack.remember_me = true;
                 snack.auto_login_attempt = true;
-                return (snack, Task::done(Message::Connect));
+                Task::done(Message::Connect)
+            }
+            else
+            {
+                focus_jid_input()
             }
         }
+        else
+        {
+            focus_jid_input()
+        };
 
-        return (snack, focus_jid_input());
+        // On macOS, set the dock icon a moment after launch — setting it before
+        // the event loop is running doesn't stick (see main::set_macos_dock_icon).
+        #[cfg(target_os = "macos")]
+        let startup = Task::batch([
+            startup,
+            delay_then(std::time::Duration::from_millis(250), Message::SetDockIcon),
+        ]);
+
+        return (snack, startup);
     }
 
     pub(crate) fn title(&self) -> String

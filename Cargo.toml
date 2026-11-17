@@ -19,6 +19,9 @@ notify-rust = "4.19.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1", features = ["keychain"] }
+objc2 = "0.5"
+objc2-app-kit = "0.2"
+objc2-foundation = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-native-keyring-store = "1"

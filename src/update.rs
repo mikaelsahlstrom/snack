@@ -827,6 +827,12 @@ impl Snack
 
                 return focus_jid_input();
             }
+            Message::SetDockIcon =>
+            {
+                // Runs on the main thread, after launch — see Snack::new.
+                #[cfg(target_os = "macos")]
+                crate::set_macos_dock_icon();
+            }
             Message::ForgetAutoLogin =>
             {
                 if let Some(jid) = self.saved_config.jid.take()

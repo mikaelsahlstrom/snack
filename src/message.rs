@@ -41,6 +41,9 @@ pub enum Message
     CloseChat,
     LeaveSelection,
     OpenUrl(String),
+    // Set the macOS dock icon (a no-op elsewhere). Fired shortly after launch,
+    // once the app has finished launching so the icon actually sticks.
+    SetDockIcon,
     ForgetAutoLogin,
     WindowFocused,
     WindowUnfocused,
